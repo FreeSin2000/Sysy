@@ -1,7 +1,7 @@
 
 use lalrpop_util::lalrpop_mod;
 use std::env::args;
-use std::fs::read_to_string;
+use std::fs::{read_to_string, write};
 use std::io::Result;
 
 // 引用 lalrpop 生成的解析器
@@ -9,6 +9,7 @@ use std::io::Result;
 lalrpop_mod!(sysy);
 mod ast;
 mod koopa_utils;
+use koopa_utils::*;
 
 fn main() -> Result<()> {
   // 解析命令行参数
@@ -28,6 +29,8 @@ fn main() -> Result<()> {
   // 输出解析得到的 AST
   println!("{:#?}", ast);
   let program = ast.to_program();
-
+  println!("{}", program_to_string(&program));
+  println!("{}", output);
+  write(output, program_to_string(&program))?;
   Ok(())
 }
