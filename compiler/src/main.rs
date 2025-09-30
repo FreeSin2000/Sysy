@@ -10,6 +10,7 @@ lalrpop_mod!(sysy);
 mod ast;
 mod koopa_utils;
 use koopa_utils::*;
+use crate::koopa_utils::GenerateAsm;
 
 fn main() -> Result<()> {
   // 解析命令行参数
@@ -25,12 +26,19 @@ fn main() -> Result<()> {
 
   // 调用 lalrpop 生成的 parser 解析输入文件
   let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
-
+  println!("mode:\n{}", mode);
   // 输出解析得到的 AST
-  println!("{:#?}", ast);
+  println!("ast:\n{:#?}", ast);
   let program = ast.to_program();
-  println!("{}", program_to_string(&program));
-  println!("{}", output);
-  write(output, program_to_string(&program))?;
+  let program_str = program_to_string(&program);
+  println!("koopa:\n{}", program_str);
+  let mut asm_str = String::new();
+  program.generate(&mut asm_str);
+  println!("riscv:\n{}", asm_str);
+  match mode.as_str() {
+    "-koopa" => write(output, program_str)?,
+    "-riscv" => write(output, asm_str)?,
+    _ => todo!("not implement other modes."),
+  }
   Ok(())
 }

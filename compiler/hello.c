@@ -5,3 +5,5 @@ int main() {
 }
 // comment test
 // hi // hi
+/*
+*/
