@@ -8,7 +8,7 @@ pub struct CompUnit {
 impl CompUnit {
     pub fn to_program(&self) -> Program {
         let mut program = Program::new();
-        let _ = program.new_func(func_def.to_func_data());
+        self.func_def.build_func(&mut program);
         program
     }
 }
@@ -22,16 +22,14 @@ pub struct FuncDef {
 }
 
 impl FuncDef {
-    pub fn to_func_data(&self) -> FunctionData {
-        let name = self.ident.clone();
+    pub fn build_func(&self, program: &mut Program) {
+        let name = String::from("@") + &self.ident;
         let params_ty = vec![];
         let ret_ty = match &self.func_type {
-            Int => Type::get_i32(),
+            FuncType::Int => Type::get_i32(),
         };       
-        let mut func_data = FunctionData::new(name, params_ty, ret_ty); 
-        func_data.layout_mut().bbs_mut().extend(self.block.to_bbs(func_data));
-        // let entry = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
-        // func_data.layout_mut().bbs_mut().extend([entry]);(
+        let main_func = program.new_func(FunctionData::with_param_names(name.into(), params_ty, ret_ty));
+        self.block.build_bbs(program.func_mut(main_func));
     }
 }
 
@@ -47,11 +45,11 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn to_bbs(&self, func_data: &mut FunctionData) -> Vec<BasicBlock> {
-        let entry = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
-        self.stmt.to_stmts(func_data);
-        func_data.layout_mut().bb_mut(entry).insts_mut().extend(self.stmt.to_values(func_data));
-        [entry]
+    pub fn build_bbs(&self, func_data: &mut FunctionData) {
+        let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
+        func_data.layout_mut().bbs_mut().extend([entry_bb]);
+        let values = self.stmt.to_values(func_data);
+        func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(values);
     }
 }
 
@@ -62,8 +60,8 @@ pub struct Stmt {
 
 impl Stmt {
     pub fn to_values(&self, func_data: &mut FunctionData) -> Vec<Value> {
-        let zero = fib_data.dfg_mut().new_value().integer(0);
-        let ret = fib_data.dfg_mut().new_value().ret(Some(zero));
-        [ret];
+        let res = func_data.dfg_mut().new_value().integer(self.num);
+        let ret = func_data.dfg_mut().new_value().ret(Some(res));
+        vec![ret]
     }
 }

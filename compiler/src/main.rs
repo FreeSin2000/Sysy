@@ -8,6 +8,7 @@ use std::io::Result;
 // 因为我们刚刚创建了 sysy.lalrpop, 所以模块名是 sysy
 lalrpop_mod!(sysy);
 mod ast;
+mod koopa_utils;
 
 fn main() -> Result<()> {
   // 解析命令行参数
@@ -26,5 +27,7 @@ fn main() -> Result<()> {
 
   // 输出解析得到的 AST
   println!("{:#?}", ast);
+  let program = ast.to_program();
+
   Ok(())
 }
