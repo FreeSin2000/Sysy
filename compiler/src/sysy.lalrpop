@@ -24,10 +24,26 @@ FuncType: FuncType = "int" => FuncType::Int;
 
 Block: Block = "{" <stmt: Stmt> "}" => Block { <> };
 
-Stmt: Stmt = "return" <num: Number> ";" => Stmt { <> };
 
-Number: i32 = <num: IntConst> => <>;
+Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { <> };
+Exp: Exp = <unary_exp: UnaryExp> => Exp {unary_exp:Box::new(<>)};
+PrimaryExp: PrimaryExp = {
+  "(" <exp: Exp> ")" => PrimaryExp::ParenthesizedExp(<>),
+  <num: Number> => PrimaryExp::Number(<>),
+}
+Number: Number = {
+  <num: IntConst> => Number::INT_CONST(<>),
+}
+UnaryExp: UnaryExp = {
+  <primary_exp: PrimaryExp> => UnaryExp::PrimaryExp(primary_exp),
+  <unary_op: UnaryOp> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(unary_op, Box::new(unary_exp)),
+}
 
+UnaryOp: UnaryOp = {
+  r"\+" => UnaryOp::Plus,
+  r"-" => UnaryOp::Minus,
+  r"!" => UnaryOp::Not,
+}
 
 // 如果匹配到标识符, 就返回这个字符串
 // 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)

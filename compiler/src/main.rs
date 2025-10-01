@@ -32,8 +32,8 @@ fn main() -> Result<()> {
   let program = ast.to_program();
   let program_str = program_to_string(&program);
   println!("koopa:\n{}", program_str);
-  let mut asm_str = String::new();
-  program.generate(&mut asm_str);
+
+  let asm_str = program_to_asm(&program);
   println!("riscv:\n{}", asm_str);
   match mode.as_str() {
     "-koopa" => write(output, program_str)?,
