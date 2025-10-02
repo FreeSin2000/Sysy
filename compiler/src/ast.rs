@@ -357,3 +357,11 @@ impl DeriveValue for LOrExp {
         }
     }
 }
+
+pub struct AstTrans;
+
+impl AstTrans {
+    pub fn to_koopa(&self, comp_unit: &CompUnit) -> Program {
+        comp_unit.to_program()
+    }
+}

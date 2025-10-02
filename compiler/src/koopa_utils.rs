@@ -7,13 +7,7 @@ use koopa::back::generator::NameManager;
 
 use std::fmt::Write;
 
-pub fn program_to_string(program: & Program) -> String {
-    let mut gen = KoopaGenerator::new(Vec::new());
-    gen.generate_on(program).unwrap();
-    let text_form_ir = std::str::from_utf8(&gen.writer()).unwrap().to_string();
-    return text_form_ir;
-}
-
+use std::cell::RefCell;
 
 // 根据内存形式 Koopa IR 生成汇编
 pub trait GenerateAsm {
@@ -178,9 +172,36 @@ pub fn value_to_asm(func_data: &FunctionData, nm: &mut NameManager, val: Value) 
     }
 }
 
-pub fn program_to_asm(program: &Program) -> String {  
-  let mut nm = NameManager::new();
-  let mut asm_str = String::new();
-  program.generate(&mut nm, &mut asm_str);
-  asm_str
+pub struct KoopaTrans {
+    nm: RefCell<NameManager>,
 }
+impl KoopaTrans {
+    pub fn new() -> KoopaTrans {
+        KoopaTrans {nm: RefCell::new(NameManager::new())}
+    }
+    pub fn to_asm(&self, program: &Program) -> String {
+        let mut asm_str = String::new();
+        program.generate(&mut self.nm.borrow_mut(), &mut asm_str);
+        asm_str
+    }
+    pub fn to_string(program: & Program) -> String {
+        let mut gen = KoopaGenerator::new(Vec::new());
+        gen.generate_on(program).unwrap();
+        let text_form_ir = std::str::from_utf8(&gen.writer()).unwrap().to_string();
+        return text_form_ir;
+    }
+}
+
+// pub fn program_to_asm(program: &Program) -> String {  
+//   let mut nm = NameManager::new();
+//   let mut asm_str = String::new();
+//   program.generate(&mut nm, &mut asm_str);
+//   asm_str
+// }
+
+// pub fn koopa_to_string(program: & Program) -> String {
+//     let mut gen = KoopaGenerator::new(Vec::new());
+//     gen.generate_on(program).unwrap();
+//     let text_form_ir = std::str::from_utf8(&gen.writer()).unwrap().to_string();
+//     return text_form_ir;
+// }

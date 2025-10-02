@@ -11,6 +11,7 @@ mod ast;
 mod koopa_utils;
 use koopa_utils::*;
 use crate::koopa_utils::GenerateAsm;
+use ast::*;
 
 fn main() -> Result<()> {
   // 解析命令行参数
@@ -29,11 +30,14 @@ fn main() -> Result<()> {
   println!("mode:\n{}", mode);
   // 输出解析得到的 AST
   println!("ast:\n{:#?}", ast);
-  let program = ast.to_program();
-  let program_str = program_to_string(&program);
-  println!("koopa:\n{}", program_str);
+  let ast_trans = AstTrans;
+  let program = ast_trans.to_koopa(&ast);
+  let program_str = KoopaTrans::to_string(&program);
 
-  let asm_str = program_to_asm(&program);
+  println!("koopa:\n{}", program_str);
+  
+  let koopa_trans = KoopaTrans::new();
+  let asm_str = koopa_trans.to_asm(&program);
   println!("riscv:\n{}", asm_str);
   match mode.as_str() {
     "-koopa" => write(output, program_str)?,
