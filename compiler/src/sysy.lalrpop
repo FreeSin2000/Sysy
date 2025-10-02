@@ -26,7 +26,10 @@ Block: Block = "{" <stmt: Stmt> "}" => Block { <> };
 
 
 Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { <> };
-Exp: Exp = <unary_exp: UnaryExp> => Exp {unary_exp:Box::new(<>)};
+
+// Exp         ::= LOrExp;
+Exp: Exp = <lor_exp: LOrExp> => Exp {lor_exp:Box::new(<>)};
+
 PrimaryExp: PrimaryExp = {
   "(" <exp: Exp> ")" => PrimaryExp::ParenthesizedExp(<>),
   <num: Number> => PrimaryExp::Number(<>),
@@ -36,14 +39,55 @@ Number: Number = {
 }
 UnaryExp: UnaryExp = {
   <primary_exp: PrimaryExp> => UnaryExp::PrimaryExp(primary_exp),
-  <unary_op: UnaryOp> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(unary_op, Box::new(unary_exp)),
+  <unary_op: r"\+"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Plus, Box::new(unary_exp)),
+  <unary_op: r"-"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Minus, Box::new(unary_exp)),
+  <unary_op: r"!"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Not, Box::new(unary_exp)),
 }
 
-UnaryOp: UnaryOp = {
-  r"\+" => UnaryOp::Plus,
-  r"-" => UnaryOp::Minus,
-  r"!" => UnaryOp::Not,
+MulExp: MulExp = {
+  <unary_exp: UnaryExp> => MulExp::UnaryExp(<>), 
+  <mul_exp: MulExp> <mul_op: r"\*"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Mul, unary_exp),
+  <mul_exp: MulExp> <mul_op: r"/"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Div, unary_exp),
+  <mul_exp: MulExp> <mul_op: r"%"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Mod, unary_exp),
 }
+
+AddExp: AddExp = {
+  <mul_exp: MulExp> => AddExp::MulExp(<>), 
+  <add_exp: AddExp> <add_op: r"\+"> <mul_exp: MulExp> => AddExp::AddOpExp(Box::new(add_exp), AddOp::Add, mul_exp),
+  <add_exp: AddExp> <add_op: r"-">  <mul_exp: MulExp> => AddExp::AddOpExp(Box::new(add_exp), AddOp::Sub, mul_exp),
+}
+
+// RelExp      ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
+
+RelExp: RelExp = {
+  <add_exp: AddExp> => RelExp::AddExp(<>),
+  <rel_exp: RelExp> r"<" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Lt, add_exp),
+  <rel_exp: RelExp> r">" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Gt, add_exp),
+  <rel_exp: RelExp> r"<=" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Le, add_exp),
+  <rel_exp: RelExp> r">=" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Ge, add_exp),
+}
+
+// EqExp       ::= RelExp | EqExp ("==" | "!=") RelExp;
+
+EqExp: EqExp = {
+  <rel_exp: RelExp> => EqExp::RelExp(<>),
+  <eq_exp: EqExp> r"==" <rel_exp: RelExp> => EqExp::EqOpExp(Box::new(eq_exp), EqOp::Eq, rel_exp),
+  <eq_exp: EqExp> r"!=" <rel_exp: RelExp> => EqExp::EqOpExp(Box::new(eq_exp), EqOp::NotEq, rel_exp),
+}
+
+// LAndExp     ::= EqExp | LAndExp "&&" EqExp;
+
+LAndExp: LAndExp = {
+  <eq_exp: EqExp> => LAndExp::EqExp(<>),
+  <land_exp: LAndExp> r"&&" <eq_exp: EqExp> => LAndExp::LAndOpExp(Box::new(land_exp), eq_exp),
+}
+
+// LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
+LOrExp: LOrExp = {
+  <land_exp: LAndExp> => LOrExp::LAndExp(<>),
+  <lor_exp: LOrExp> r"\|\|" <land_exp: LAndExp> => LOrExp::LOrOpExp(Box::new(lor_exp), land_exp),
+}
+
 
 // 如果匹配到标识符, 就返回这个字符串
 // 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)

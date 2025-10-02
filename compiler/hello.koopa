@@ -1,5 +1,6 @@
 fun @main(): i32 {
 %entry:
-  %0 = sub 0, 2
-  ret %0
+  %0 = or 114, 514
+  %1 = ne %0, 0
+  ret %1
 }

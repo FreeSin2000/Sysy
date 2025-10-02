@@ -59,9 +59,44 @@ pub fn value_to_name(func_data: &FunctionData, nm: &mut NameManager, val: Value)
     if val_data.kind().is_const() { 
         value_to_asm(func_data, nm, val)
     } else {
-        format!("t{}", &nm.value_name(val_data).to_string()[1..])
+        // format!("t{}", &nm.value_name(val_data).to_string()[1..])
+        idx_to_reg(nm.value_name(val_data).to_string()[1..].parse::<usize>().unwrap())
     }
 }
+pub fn idx_to_reg(idx: usize) -> String {
+    assert!(idx < 15);
+    if idx < 7 {
+        format!("t{}", idx.to_string())
+    } else {
+        format!("a{}", (idx - 7).to_string())
+    }
+}
+pub fn reg_to_idx(reg_name: &str) -> Option<usize> {
+    match reg_name {
+        // T 寄存器 (t0-t6): 7个，序号从 0 开始
+        "t0" => Some(0),
+        "t1" => Some(1),
+        "t2" => Some(2),
+        "t3" => Some(3),
+        "t4" => Some(4),
+        "t5" => Some(5),
+        "t6" => Some(6),
+        
+        // A 寄存器 (a0-a7): 8个，接在 T 寄存器后面
+        "a0" => Some(7),
+        "a1" => Some(8),
+        "a2" => Some(9),
+        "a3" => Some(10),
+        "a4" => Some(11),
+        "a5" => Some(12),
+        "a6" => Some(13),
+        "a7" => Some(14),
+        
+        // 如果输入了其他名称，返回 None
+        _ => None,
+    }
+}
+
 pub fn value_to_asm(func_data: &FunctionData, nm: &mut NameManager, val: Value) -> String {
     let val_data = func_data.dfg().value(val); 
     let val_kind = val_data.kind();
@@ -86,7 +121,7 @@ pub fn value_to_asm(func_data: &FunctionData, nm: &mut NameManager, val: Value) 
             let mut asm_str = String::new();
 
             let val_nm = nm.value_name(val_data).to_string();
-            let val_name = format!("t{}", &val_nm[1..]);
+            let val_name = idx_to_reg(val_nm[1..].parse::<usize>().unwrap());
 
             let lhs = binary.lhs();
             let mut lhs_name = value_to_name(func_data, nm, lhs);
@@ -104,16 +139,36 @@ pub fn value_to_asm(func_data: &FunctionData, nm: &mut NameManager, val: Value) 
                     asm_str = asm_str + &format!("    li    {}, {}\n", val_name, rhs_name);
                     rhs_name = val_name.clone();
                 } else {
-                    asm_str = asm_str + &format!("    li    a0, {}\n", rhs_name);
-                    rhs_name = String::from("a0");
+                    let val_idx = reg_to_idx(&val_name).unwrap();
+                    let next_reg = idx_to_reg(val_idx + 1);
+                    asm_str = asm_str + &format!("    li    {}, {}\n", next_reg, rhs_name);
+                    rhs_name = next_reg;
                 }
             }
             asm_str + &match binary.op() {
                 BinaryOp::Add => format!("    add   {}, {}, {}\n", val_name, lhs_name, rhs_name),
                 BinaryOp::Sub => format!("    sub   {}, {}, {}\n", val_name, lhs_name, rhs_name),
+                BinaryOp::Mul => format!("    mul   {}, {}, {}\n", val_name, lhs_name, rhs_name),
+                BinaryOp::Mod => format!("    rem   {}, {}, {}\n", val_name, lhs_name, rhs_name),
+                BinaryOp::Div => format!("    div   {}, {}, {}\n", val_name, lhs_name, rhs_name),
+                BinaryOp::And => format!("    and   {}, {}, {}\n", val_name, lhs_name, rhs_name),
+                BinaryOp::Or => format!("    or    {}, {}, {}\n", val_name, lhs_name, rhs_name),
+                BinaryOp::Lt => format!("    slt   {}, {}, {}\n", val_name, lhs_name, rhs_name),
+                BinaryOp::Gt => format!("    sgt   {}, {}, {}\n", val_name, lhs_name, rhs_name),
+                BinaryOp::Le => {
+                    format!("    sgt   {}, {}, {}\n    xori  {}, {}, {}\n", val_name, lhs_name, rhs_name, val_name, val_name, 1)
+                },
+                BinaryOp::Ge => {
+                    format!("    slt   {}, {}, {}\n    xori  {}, {}, {}\n", val_name, lhs_name, rhs_name, val_name, val_name, 1)
+                },
                 BinaryOp::Eq => {
-                    let xor_inst = format!("    xor   {}, {}, {}", val_name, val_name, rhs_name); 
+                    let xor_inst = format!("    xor   {}, {}, {}", val_name, lhs_name, rhs_name); 
                     let seqz_inst = format!("    seqz  {}, {}", val_name, val_name); 
+                    format!("{}\n{}\n", xor_inst, seqz_inst)
+                },
+                BinaryOp::NotEq => {
+                    let xor_inst = format!("    xor   {}, {}, {}", val_name, lhs_name, rhs_name); 
+                    let seqz_inst = format!("    snez  {}, {}", val_name, val_name); 
                     format!("{}\n{}\n", xor_inst, seqz_inst)
                 },
                 _ => unimplemented!(),
