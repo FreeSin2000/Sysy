@@ -34,6 +34,8 @@ impl FuncDef {
         };       
         let main_func = program.new_func(FunctionData::with_param_names(name.into(), params_ty, ret_ty));
         self.block.build_bbs(program.func_mut(main_func), ast_trans);
+        let mut st = ast_trans.local_sym_tab.borrow_mut();
+        st.clear();
     }
 }
 
