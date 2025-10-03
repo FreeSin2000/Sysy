@@ -1,14 +1,18 @@
 use koopa::ir::*;
 use koopa::ir::builder_traits::*;
+use koopa::ir::entities::*;
+
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct CompUnit {
     pub func_def: FuncDef,
 }
 impl CompUnit {
-    pub fn to_program(&self) -> Program {
+    pub fn to_program(&self, ast_trans: &AstTrans) -> Program {
         let mut program = Program::new();
-        self.func_def.build_func(&mut program);
+        self.func_def.build_func(&mut program, ast_trans);
         program
     }
 }
@@ -22,14 +26,14 @@ pub struct FuncDef {
 }
 
 impl FuncDef {
-    pub fn build_func(&self, program: &mut Program) {
+    pub fn build_func(&self, program: &mut Program, ast_trans: &AstTrans) {
         let name = String::from("@") + &self.ident;
         let params_ty = vec![];
         let ret_ty = match &self.func_type {
             FuncType::Int => Type::get_i32(),
         };       
         let main_func = program.new_func(FunctionData::with_param_names(name.into(), params_ty, ret_ty));
-        self.block.build_bbs(program.func_mut(main_func));
+        self.block.build_bbs(program.func_mut(main_func), ast_trans);
     }
 }
 
@@ -38,18 +42,32 @@ pub enum FuncType {
     Int,
 }
 
-
+// Block         ::= "{" {BlockItem} "}";
 #[derive(Debug)]
 pub struct Block {
-    pub stmt: Stmt,
+    pub block_items: Vec<BlockItem>,
 }
 
 impl Block {
-    pub fn build_bbs(&self, func_data: &mut FunctionData) {
+    pub fn build_bbs(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) {
         let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
         func_data.layout_mut().bbs_mut().extend([entry_bb]);
-        let (_, insts) = self.stmt.to_value(func_data);
-        func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
+        for block_item in &self.block_items {
+            match block_item {
+                BlockItem::Decl(decl) => {
+                    match decl {
+                        Decl::ConstDecl(const_decl) => {
+                            const_decl.build_bindings(func_data, ast_trans);
+                        },
+                        _ => unimplemented!("Not implement other decl."),
+                    }
+                },
+                BlockItem::Stmt(stmt) => {
+                    let (_, insts) = stmt.to_value(func_data, ast_trans);
+                    func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
+                },
+            };
+        }
     }
 }
 
@@ -59,11 +77,11 @@ pub struct Stmt {
 }
 
 pub trait DeriveValue {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>);
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>);
 }
 impl DeriveValue for Stmt {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
-        let (res, mut insts) = self.exp.to_value(func_data);
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+        let (res, mut insts) = self.exp.to_value(func_data, ast_trans);
         let ret = func_data.dfg_mut().new_value().ret(Some(res));
         insts.push(ret);
         (ret, insts)
@@ -76,7 +94,7 @@ pub enum Number {
 }
 
 impl DeriveValue for Number {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
         match self {
             Number::INT_CONST(num) => {
                 let val = func_data.dfg_mut().new_value().integer(*num);
@@ -101,25 +119,24 @@ pub enum UnaryExp {
 }
 
 impl DeriveValue for UnaryExp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
         match self {
-            UnaryExp::PrimaryExp(primary_exp) => primary_exp.to_value(func_data),
+            UnaryExp::PrimaryExp(primary_exp) => primary_exp.to_value(func_data, ast_trans),
             UnaryExp::UnaryOpExp(unary_op, unary_exp) => {
                 match unary_op {
-                    UnaryOp::Plus => unary_exp.to_value(func_data),
+                    UnaryOp::Plus => unary_exp.to_value(func_data, ast_trans),
                     UnaryOp::Minus => {
                         let lhs = func_data.dfg_mut().new_value().integer(0);
-                        let (rhs, mut insts) = unary_exp.to_value(func_data);
-                        let val = func_data.dfg_mut().new_value().binary(BinaryOp::Sub, lhs, rhs);
-                        insts.push(val);
+                        let (rhs, mut insts) = unary_exp.to_value(func_data, ast_trans);
+                        let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Sub);
+                        insts.extend(val_insts);
                         (val, insts)
                     },
                     UnaryOp::Not => {
                         let rhs  = func_data.dfg_mut().new_value().integer(0);
-                        let (lhs, mut insts) = unary_exp.to_value(func_data);
-                        let val = func_data.dfg_mut().new_value().binary(BinaryOp::Eq, lhs, rhs);
-                        let mut res_insts: Vec<Value> = Vec::new();
-                        insts.push(val);
+                        let (lhs, mut insts) = unary_exp.to_value(func_data, ast_trans);
+                        let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Eq); 
+                        insts.extend(val_insts);
                         (val, insts)
                     },
                 }
@@ -128,17 +145,20 @@ impl DeriveValue for UnaryExp {
     }
 }
 
+// PrimaryExp    ::= "(" Exp ")" | LVal | Number;
 #[derive(Debug)]
 pub enum PrimaryExp {
     ParenthesizedExp(Exp),
+    LVal(LVal),
     Number(Number),
 }
 
 impl DeriveValue for PrimaryExp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>){
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>){
         match self {
-            PrimaryExp::ParenthesizedExp(exp) => exp.to_value(func_data),
-            PrimaryExp::Number(num) => num.to_value(func_data),
+            PrimaryExp::ParenthesizedExp(exp) => exp.to_value(func_data, ast_trans),
+            PrimaryExp::LVal(lval) => lval.to_value(func_data, ast_trans),
+            PrimaryExp::Number(num) => num.to_value(func_data, ast_trans),
         }
     }
 }
@@ -149,8 +169,8 @@ pub struct Exp {
 }
 
 impl DeriveValue for Exp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
-        return self.lor_exp.to_value(func_data);
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+        return self.lor_exp.to_value(func_data, ast_trans);
     }
 }
 
@@ -168,25 +188,19 @@ pub enum MulExp {
 }
 
 impl DeriveValue for MulExp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
         match self {
-            MulExp::UnaryExp(unary_exp) => unary_exp.to_value(func_data),
+            MulExp::UnaryExp(unary_exp) => unary_exp.to_value(func_data, ast_trans),
             MulExp::MulOpExp(mul_exp, mul_op, unary_exp) => {
-                let (lhs, mut l_insts) = mul_exp.to_value(func_data);
-                let (rhs, r_insts) = unary_exp.to_value(func_data);
-                let val = match mul_op {
-                    MulOp::Mul => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Mul, lhs, rhs)
-                    },
-                    MulOp::Div => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Div, lhs, rhs)
-                    },
-                    MulOp::Mod => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Mod, lhs, rhs)
-                    },
+                let (lhs, mut l_insts) = mul_exp.to_value(func_data, ast_trans);
+                let (rhs, r_insts) = unary_exp.to_value(func_data, ast_trans);
+                let (val, val_insts) = match mul_op {
+                    MulOp::Mul => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Mul),
+                    MulOp::Div => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Div),
+                    MulOp::Mod => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Mod),
                 };
                 l_insts.extend(r_insts);
-                l_insts.push(val);
+                l_insts.extend(val_insts);
                 (val, l_insts)
             }
         }
@@ -204,22 +218,18 @@ pub enum AddExp {
     AddOpExp(Box<AddExp>, AddOp, MulExp),
 }
 impl DeriveValue for AddExp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
         match self {
-            AddExp::MulExp(mul_exp) => mul_exp.to_value(func_data),
+            AddExp::MulExp(mul_exp) => mul_exp.to_value(func_data, ast_trans),
             AddExp::AddOpExp(add_exp, add_op, mul_exp) => {
-                let (lhs, mut l_insts) = add_exp.to_value(func_data);
-                let (rhs, r_insts) = mul_exp.to_value(func_data);
-                let val = match add_op {
-                    AddOp::Add => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Add, lhs, rhs)
-                    },
-                    AddOp::Sub => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Sub, lhs, rhs)
-                    },
+                let (lhs, mut l_insts) = add_exp.to_value(func_data, ast_trans);
+                let (rhs, r_insts) = mul_exp.to_value(func_data, ast_trans);
+                let (val, val_insts) = match add_op {
+                    AddOp::Add => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Add),
+                    AddOp::Sub => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Sub),
                 };
                 l_insts.extend(r_insts);
-                l_insts.push(val);
+                l_insts.extend(val_insts);
                 (val, l_insts)
             }
         }
@@ -234,28 +244,20 @@ pub enum RelExp {
 }
 
 impl DeriveValue for RelExp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
         match self {
-            RelExp::AddExp(add_exp) => add_exp.to_value(func_data),
+            RelExp::AddExp(add_exp) => add_exp.to_value(func_data, ast_trans),
             RelExp::RelOpExp(rel_exp, rel_op, add_exp) => {
-                let (lhs, mut l_insts) = rel_exp.to_value(func_data);
-                let (rhs, r_insts) = add_exp.to_value(func_data);
-                let val = match rel_op {
-                    RelOp::Lt => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Lt, lhs, rhs)
-                    },
-                    RelOp::Gt => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Gt, lhs, rhs)
-                    },
-                    RelOp::Le => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Le, lhs, rhs)
-                    },
-                    RelOp::Ge => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Ge, lhs, rhs)
-                    },
+                let (lhs, mut l_insts) = rel_exp.to_value(func_data, ast_trans);
+                let (rhs, r_insts) = add_exp.to_value(func_data, ast_trans);
+                let (val, val_insts) = match rel_op {
+                    RelOp::Gt => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Gt),
+                    RelOp::Lt => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Lt),
+                    RelOp::Ge => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Ge),
+                    RelOp::Le => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Le),
                 };
                 l_insts.extend(r_insts);
-                l_insts.push(val);
+                l_insts.extend(val_insts);
                 (val, l_insts)
             }
         }
@@ -279,22 +281,18 @@ pub enum EqExp {
 }
 
 impl DeriveValue for EqExp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
         match self {
-            EqExp::RelExp(rel_exp) => rel_exp.to_value(func_data),
+            EqExp::RelExp(rel_exp) => rel_exp.to_value(func_data, ast_trans),
             EqExp::EqOpExp(eq_exp, eq_op, rel_exp) => {
-                let (lhs, mut l_insts) = eq_exp.to_value(func_data);
-                let (rhs, r_insts) = rel_exp.to_value(func_data);
-                let val = match eq_op {
-                    EqOp::Eq => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::Eq, lhs, rhs)
-                    },
-                    EqOp::NotEq => {
-                        func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, lhs, rhs)
-                    },
+                let (lhs, mut l_insts) = eq_exp.to_value(func_data, ast_trans);
+                let (rhs, r_insts) = rel_exp.to_value(func_data, ast_trans);
+                let (val, val_insts) = match eq_op {
+                    EqOp::Eq => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Eq),
+                    EqOp::NotEq => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::NotEq),
                 };
                 l_insts.extend(r_insts);
-                l_insts.push(val);
+                l_insts.extend(val_insts);
                 (val, l_insts)
             }
         }
@@ -315,20 +313,23 @@ pub enum LAndExp {
 }
 
 impl DeriveValue for LAndExp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
         match self {
-            LAndExp::EqExp(eq_exp) => eq_exp.to_value(func_data),
+            LAndExp::EqExp(eq_exp) => eq_exp.to_value(func_data, ast_trans),
             LAndExp::LAndOpExp(land_exp, eq_exp) => {
-                let (lhs, mut l_insts) = land_exp.to_value(func_data);
-                let (rhs, r_insts) = eq_exp.to_value(func_data);
+                let (lhs, mut l_insts) = land_exp.to_value(func_data, ast_trans);
+                let (rhs, r_insts) = eq_exp.to_value(func_data, ast_trans);
                 let zero = func_data.dfg_mut().new_value().integer(0);
-                let l_lhs = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, lhs, zero); 
-                let l_rhs = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, rhs, zero); 
-                let val = func_data.dfg_mut().new_value().binary(BinaryOp::And, l_lhs, l_rhs);
+                let (l_lhs, ll_insts) = AstTrans::build_binary_op(func_data, lhs, zero, BinaryOp::NotEq);
+                // let l_lhs = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, lhs, zero); 
+                let (l_rhs, lr_insts) = AstTrans::build_binary_op(func_data, rhs, zero, BinaryOp::NotEq);
+                // let l_rhs = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, rhs, zero); 
+                let (val, val_insts) = AstTrans::build_binary_op(func_data, l_lhs, l_rhs, BinaryOp::And);
+                // let val = func_data.dfg_mut().new_value().binary(BinaryOp::And, l_lhs, l_rhs);
                 l_insts.extend(r_insts);
-                l_insts.push(l_lhs);
-                l_insts.push(l_rhs);
-                l_insts.push(val);
+                l_insts.extend(ll_insts);
+                l_insts.extend(lr_insts);
+                l_insts.extend(val_insts);
                 (val, l_insts)
             }
         }
@@ -340,28 +341,176 @@ pub enum LOrExp {
     LOrOpExp(Box<LOrExp>, LAndExp),
 }
 impl DeriveValue for LOrExp {
-    fn to_value(&self, func_data: &mut FunctionData) -> (Value, Vec<Value>) {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
         match self {
-            LOrExp::LAndExp(land_exp) => land_exp.to_value(func_data),
+            LOrExp::LAndExp(land_exp) => land_exp.to_value(func_data, ast_trans),
             LOrExp::LOrOpExp(lor_exp, land_exp) => {
-                let (lhs, mut l_insts) = lor_exp.to_value(func_data);
-                let (rhs, r_insts) = land_exp.to_value(func_data);
-                let val = func_data.dfg_mut().new_value().binary(BinaryOp::Or, lhs, rhs);
+                let (lhs, mut l_insts) = lor_exp.to_value(func_data, ast_trans);
+                let (rhs, r_insts) = land_exp.to_value(func_data, ast_trans);
+                let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Or);
+                // let val = func_data.dfg_mut().new_value().binary(BinaryOp::Or, lhs, rhs);
                 let zero = func_data.dfg_mut().new_value().integer(0);
-                let l_val = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, val, zero); 
+                let (l_val, lv_insts) = AstTrans::build_binary_op(func_data, val, zero, BinaryOp::NotEq);
+                // let l_val = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, val, zero); 
                 l_insts.extend(r_insts);
-                l_insts.push(val);
-                l_insts.push(l_val);
+                l_insts.extend(val_insts);
+                l_insts.extend(lv_insts);
                 (l_val, l_insts)
             }
         }
     }
 }
 
-pub struct AstTrans;
+// Decl          ::= ConstDecl;
+#[derive(Debug)]
+pub enum Decl {
+    ConstDecl(ConstDecl),
+}
+
+// ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
+#[derive(Debug)]
+pub struct ConstDecl {
+    pub btype: BType,
+    pub const_defs: Vec<ConstDef>,
+}
+
+impl ConstDecl {
+    fn build_bindings(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> () {
+        for const_def in &self.const_defs {
+            let (ident, val) = const_def.to_binding(func_data, ast_trans);
+            match self.btype {
+                BType::Int => {
+                    let val_data = func_data.dfg().value(val);
+                    let num = AstTrans::const_num(val_data);
+                    let mut st = ast_trans.local_sym_tab.borrow_mut();
+                    st.insert(ident.clone(), BindingItem::Int(val, num));
+                },
+                _ => unimplemented!("Not implement other type bindings."),
+            }
+        }
+    }
+}
+
+// BType         ::= "int";
+#[derive(Debug)]
+pub enum BType {
+    Int,
+}
+
+// ConstDef      ::= IDENT "=" ConstInitVal;
+#[derive(Debug)]
+pub struct ConstDef {
+    pub ident: String,
+    pub const_init_val: ConstInitVal,
+}
+
+impl ConstDef {
+    fn to_binding(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (String, Value) {
+        let (val, _) = self.const_init_val.const_exp.exp.to_value(func_data, ast_trans);
+        assert!(func_data.dfg().value(val).kind().is_const());
+        (self.ident.clone(), val)
+    }
+}
+
+// ConstInitVal  ::= ConstExp;
+#[derive(Debug)]
+pub struct ConstInitVal {
+    pub const_exp: ConstExp,
+}
+
+
+// BlockItem     ::= Decl | Stmt;
+#[derive(Debug)]
+pub enum BlockItem {
+    Decl(Decl),
+    Stmt(Stmt),
+}
+
+
+// LVal          ::= IDENT;
+#[derive(Debug)]
+pub enum LVal {
+    IDENT(String),
+}
+impl DeriveValue for LVal {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+        match self {
+            LVal::IDENT(ident) => { 
+                let st = ast_trans.local_sym_tab.borrow();
+                if let Some(binding) = st.get(ident) {
+                    match binding {
+                        BindingItem::Int(val, num) => {
+                            (*val, vec![])
+                        }
+                    }
+                } else {
+                    panic!("undefined name.");
+                }
+            },
+            _ => unimplemented!("Unlmplement LVal."),
+        }
+    }
+}
+// ConstExp      ::= Exp;
+#[derive(Debug)]
+pub struct ConstExp {
+    pub exp: Exp,
+}
+
+pub enum BindingItem {
+    Int(Value, i32),
+}
+
+pub struct AstTrans {
+    pub local_sym_tab: RefCell<HashMap<String, BindingItem>>,
+}
 
 impl AstTrans {
+    pub fn new() -> AstTrans {
+        AstTrans {local_sym_tab: RefCell::new(HashMap::new())}
+    }
     pub fn to_koopa(&self, comp_unit: &CompUnit) -> Program {
-        comp_unit.to_program()
+        comp_unit.to_program(self)
+    }
+    pub fn build_binary_op(func_data: &mut FunctionData, lhs: Value, rhs: Value, op: BinaryOp) -> (Value, Vec<Value>) {
+        let lhs_data = func_data.dfg().value(lhs);
+        let rhs_data = func_data.dfg().value(rhs);
+        if lhs_data.kind().is_const() && rhs_data.kind().is_const() {
+            let lhs_num = match lhs_data.kind() {
+                ValueKind::Integer(num) => num.value(),
+                _ => panic!("Not a number."), 
+            };
+            let rhs_num = match rhs_data.kind() {
+                ValueKind::Integer(num) => num.value(),
+                _ => panic!("Not a number!"), 
+            };
+            let val_num = match op {
+                BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
+                BinaryOp::Eq => (lhs_num == rhs_num) as i32,
+                BinaryOp::Gt => (lhs_num > rhs_num) as i32,
+                BinaryOp::Lt => (lhs_num < rhs_num) as i32,
+                BinaryOp::Ge => (lhs_num >= rhs_num) as i32,
+                BinaryOp::Le => (lhs_num <= rhs_num) as i32,
+                BinaryOp::Add => lhs_num + rhs_num,
+                BinaryOp::Sub => lhs_num - rhs_num,
+                BinaryOp::Mul => lhs_num * rhs_num,
+                BinaryOp::Div => lhs_num / rhs_num,
+                BinaryOp::Mod => lhs_num % rhs_num,
+                BinaryOp::Or => (lhs_num !=0 || rhs_num != 0) as i32,
+                BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
+                _ => unimplemented!("Binary op not implement!"), 
+            };
+            let val = func_data.dfg_mut().new_value().integer(val_num);
+            (val, vec![])
+        } else {
+            let val = func_data.dfg_mut().new_value().binary(op, lhs, rhs);
+            (val, vec![val])
+        }
+    }
+    pub fn const_num(val_data: &ValueData) -> i32 {
+        match val_data.kind() {
+            ValueKind::Integer(int) => int.value(),
+            _ => panic!("Not a Integer, maybe not implement."),
+        }
     }
 }

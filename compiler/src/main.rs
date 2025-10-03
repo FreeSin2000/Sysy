@@ -30,7 +30,8 @@ fn main() -> Result<()> {
   println!("mode:\n{}", mode);
   // 输出解析得到的 AST
   println!("ast:\n{:#?}", ast);
-  let ast_trans = AstTrans;
+
+  let ast_trans = AstTrans::new();
   let program = ast_trans.to_koopa(&ast);
   let program_str = KoopaTrans::to_string(&program);
 

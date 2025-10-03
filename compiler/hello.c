@@ -1,18 +1,6 @@
 
-// int main() {
-//   // 忽略我的存在
-//   return 0;
-// }
-// int main() {
-  // return +(- -!6);  // 看起来像个颜文字
-  // return -2;
-// }
 int main() {
-  // return 1 + 2 * 3 + 5 / 6 >= 1 || 114 < 514;
-  return 114 || 514;
+  const int x = 233, z = 777, y = 666;
+  const int u = x;
+  return x + z;
 }
-
-// comment test
-// hi // hi
-/*
-*/

@@ -20,74 +20,119 @@ FuncDef: FuncDef = {
   }
 }
 
-FuncType: FuncType = "int" => FuncType::Int;
+FuncType: FuncType = <btype: BType> => match <> {
+  BType::Int => FuncType::Int,
+  _ => unimplemented!("Not implement othe binding types."),
+};
 
-Block: Block = "{" <stmt: Stmt> "}" => Block { <> };
 
+// Block         ::= "{" {BlockItem} "}";
+// Block: Block = "{" <stmt: Stmt> "}" => Block { <> };
+Block: Block = {
+  "{" <block_items: BlockItem*> "}" => Block{<>}
+}
 
 Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { <> };
 
 // Exp         ::= LOrExp;
 Exp: Exp = <lor_exp: LOrExp> => Exp {lor_exp:Box::new(<>)};
 
+// PrimaryExp    ::= "(" Exp ")" | LVal | Number;
 PrimaryExp: PrimaryExp = {
   "(" <exp: Exp> ")" => PrimaryExp::ParenthesizedExp(<>),
+  <lval: LVal> => PrimaryExp::LVal(<>),
   <num: Number> => PrimaryExp::Number(<>),
 }
+
 Number: Number = {
   <num: IntConst> => Number::INT_CONST(<>),
 }
 UnaryExp: UnaryExp = {
   <primary_exp: PrimaryExp> => UnaryExp::PrimaryExp(primary_exp),
-  <unary_op: r"\+"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Plus, Box::new(unary_exp)),
-  <unary_op: r"-"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Minus, Box::new(unary_exp)),
-  <unary_op: r"!"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Not, Box::new(unary_exp)),
+  <unary_op: "+"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Plus, Box::new(unary_exp)),
+  <unary_op: "-"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Minus, Box::new(unary_exp)),
+  <unary_op: "!"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Not, Box::new(unary_exp)),
 }
 
 MulExp: MulExp = {
   <unary_exp: UnaryExp> => MulExp::UnaryExp(<>), 
-  <mul_exp: MulExp> <mul_op: r"\*"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Mul, unary_exp),
-  <mul_exp: MulExp> <mul_op: r"/"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Div, unary_exp),
-  <mul_exp: MulExp> <mul_op: r"%"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Mod, unary_exp),
+  <mul_exp: MulExp> <mul_op: "*"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Mul, unary_exp),
+  <mul_exp: MulExp> <mul_op: "/"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Div, unary_exp),
+  <mul_exp: MulExp> <mul_op: "%"> <unary_exp: UnaryExp> => MulExp::MulOpExp(Box::new(mul_exp), MulOp::Mod, unary_exp),
 }
 
 AddExp: AddExp = {
   <mul_exp: MulExp> => AddExp::MulExp(<>), 
-  <add_exp: AddExp> <add_op: r"\+"> <mul_exp: MulExp> => AddExp::AddOpExp(Box::new(add_exp), AddOp::Add, mul_exp),
-  <add_exp: AddExp> <add_op: r"-">  <mul_exp: MulExp> => AddExp::AddOpExp(Box::new(add_exp), AddOp::Sub, mul_exp),
+  <add_exp: AddExp> <add_op: "+"> <mul_exp: MulExp> => AddExp::AddOpExp(Box::new(add_exp), AddOp::Add, mul_exp),
+  <add_exp: AddExp> <add_op: "-">  <mul_exp: MulExp> => AddExp::AddOpExp(Box::new(add_exp), AddOp::Sub, mul_exp),
 }
 
 // RelExp      ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
 
 RelExp: RelExp = {
   <add_exp: AddExp> => RelExp::AddExp(<>),
-  <rel_exp: RelExp> r"<" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Lt, add_exp),
-  <rel_exp: RelExp> r">" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Gt, add_exp),
-  <rel_exp: RelExp> r"<=" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Le, add_exp),
-  <rel_exp: RelExp> r">=" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Ge, add_exp),
+  <rel_exp: RelExp> "<" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Lt, add_exp),
+  <rel_exp: RelExp> ">" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Gt, add_exp),
+  <rel_exp: RelExp> "<=" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Le, add_exp),
+  <rel_exp: RelExp> ">=" <add_exp: AddExp> => RelExp::RelOpExp(Box::new(rel_exp), RelOp::Ge, add_exp),
 }
 
 // EqExp       ::= RelExp | EqExp ("==" | "!=") RelExp;
 
 EqExp: EqExp = {
   <rel_exp: RelExp> => EqExp::RelExp(<>),
-  <eq_exp: EqExp> r"==" <rel_exp: RelExp> => EqExp::EqOpExp(Box::new(eq_exp), EqOp::Eq, rel_exp),
-  <eq_exp: EqExp> r"!=" <rel_exp: RelExp> => EqExp::EqOpExp(Box::new(eq_exp), EqOp::NotEq, rel_exp),
+  <eq_exp: EqExp> "==" <rel_exp: RelExp> => EqExp::EqOpExp(Box::new(eq_exp), EqOp::Eq, rel_exp),
+  <eq_exp: EqExp> "!=" <rel_exp: RelExp> => EqExp::EqOpExp(Box::new(eq_exp), EqOp::NotEq, rel_exp),
 }
 
 // LAndExp     ::= EqExp | LAndExp "&&" EqExp;
 
 LAndExp: LAndExp = {
   <eq_exp: EqExp> => LAndExp::EqExp(<>),
-  <land_exp: LAndExp> r"&&" <eq_exp: EqExp> => LAndExp::LAndOpExp(Box::new(land_exp), eq_exp),
+  <land_exp: LAndExp> "&&" <eq_exp: EqExp> => LAndExp::LAndOpExp(Box::new(land_exp), eq_exp),
 }
 
 // LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
 LOrExp: LOrExp = {
   <land_exp: LAndExp> => LOrExp::LAndExp(<>),
-  <lor_exp: LOrExp> r"\|\|" <land_exp: LAndExp> => LOrExp::LOrOpExp(Box::new(lor_exp), land_exp),
+  <lor_exp: LOrExp> "||" <land_exp: LAndExp> => LOrExp::LOrOpExp(Box::new(lor_exp), land_exp),
 }
 
+// Decl          ::= ConstDecl;
+Decl: Decl = <const_decl: ConstDecl> => Decl::ConstDecl(const_decl);
+
+// ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T> => {
+      v.push(e);
+      v
+    }
+};
+
+ConstDecl: ConstDecl = "const" <btype: BType> <const_defs: Comma<ConstDef>> ";" => ConstDecl{btype, const_defs};
+
+// BType         ::= "int";
+BType: BType = {
+  "int" => BType::Int,
+}
+
+// ConstDef      ::= IDENT "=" ConstInitVal;
+ConstDef: ConstDef = <ident: Ident> "=" <const_init_val: ConstInitVal> => ConstDef{ident, const_init_val};
+// ConstInitVal  ::= ConstExp;
+ConstInitVal: ConstInitVal = <const_exp: ConstExp> => ConstInitVal{<>};
+
+// BlockItem     ::= Decl | Stmt;
+BlockItem: BlockItem = {
+  <decl: Decl> => BlockItem::Decl(<>),
+  <stmt: Stmt> => BlockItem::Stmt(<>),
+}
+
+// LVal          ::= IDENT;
+LVal: LVal = <ident: Ident> => LVal::IDENT(<>);
+
+// ConstExp      ::= Exp;
+ConstExp: ConstExp = <exp: Exp> => ConstExp { <> };
 
 // 如果匹配到标识符, 就返回这个字符串
 // 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)
