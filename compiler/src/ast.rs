@@ -61,6 +61,10 @@ impl Block {
                         Decl::ConstDecl(const_decl) => {
                             const_decl.build_bindings(func_data, ast_trans);
                         },
+                        Decl::VarDecl(var_decl) => {
+                            let insts = var_decl.to_bindngs(func_data, ast_trans);
+                            func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
+                        }
                         _ => unimplemented!("Not implement other decl."),
                     }
                 },
@@ -73,9 +77,12 @@ impl Block {
     }
 }
 
+// Stmt          ::= LVal "=" Exp ";"
+//                 | "return" Exp ";";
 #[derive(Debug)]
-pub struct Stmt {
-    pub exp: Exp,
+pub enum Stmt {
+    LValExp(LVal, Exp),
+    RetExp(Exp),
 }
 
 pub trait DeriveValue {
@@ -83,10 +90,23 @@ pub trait DeriveValue {
 }
 impl DeriveValue for Stmt {
     fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
-        let (res, mut insts) = self.exp.to_value(func_data, ast_trans);
-        let ret = func_data.dfg_mut().new_value().ret(Some(res));
-        insts.push(ret);
-        (ret, insts)
+        match self {
+            Self::LValExp(lval, exp) => {
+                let (l_val, mut l_insts) = lval.to_value(func_data, ast_trans);
+                let (r_val, r_insts) = exp.to_value(func_data, ast_trans);
+                let (s_val, s_insts) = AstTrans::build_store_op(func_data, l_val, r_val);
+                l_insts.extend(r_insts);
+                l_insts.extend(s_insts);
+                (l_val, l_insts)
+            },
+            Self::RetExp(exp) => {
+                let (res, mut insts) = exp.to_value(func_data, ast_trans);
+                let (ret, ret_insts) = AstTrans::build_ret_op(func_data, Some(res));
+                // let ret = func_data.dfg_mut().new_value().ret(Some(res));
+                insts.extend(ret_insts);
+                (ret, insts)
+            }
+        }
     }
 }
 
@@ -159,7 +179,20 @@ impl DeriveValue for PrimaryExp {
     fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>){
         match self {
             PrimaryExp::ParenthesizedExp(exp) => exp.to_value(func_data, ast_trans),
-            PrimaryExp::LVal(lval) => lval.to_value(func_data, ast_trans),
+            PrimaryExp::LVal(lval) => {
+                let (val, mut val_insts) = lval.to_value(func_data, ast_trans);
+                let val_data = func_data.dfg().value(val);
+                match val_data.kind() {
+                    ValueKind::Integer(int) => (val, val_insts),
+                    ValueKind::Binary(binary) =>(val, val_insts),
+                    ValueKind::Alloc(alloc) => {
+                        let (load_val, load_insts) = AstTrans::build_load_op(func_data, val);
+                        val_insts.extend(load_insts);
+                        (load_val, val_insts)
+                    }
+                    _ => unimplemented!("Unimplement LVal kind."),
+                }
+            },
             PrimaryExp::Number(num) => num.to_value(func_data, ast_trans),
         }
     }
@@ -363,10 +396,11 @@ impl DeriveValue for LOrExp {
     }
 }
 
-// Decl          ::= ConstDecl;
+// Decl          ::= ConstDecl | VarDecl;
 #[derive(Debug)]
 pub enum Decl {
     ConstDecl(ConstDecl),
+    VarDecl(VarDecl),
 }
 
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
@@ -385,7 +419,7 @@ impl ConstDecl {
                     let val_data = func_data.dfg().value(val);
                     let num = AstTrans::const_num(val_data);
                     let mut st = ast_trans.local_sym_tab.borrow_mut();
-                    st.insert(ident.clone(), BindingItem::Int(val, num));
+                    st.insert(ident.clone(), BindingItem::ConstInt(val, num));
                 },
                 _ => unimplemented!("Not implement other type bindings."),
             }
@@ -441,15 +475,19 @@ impl DeriveValue for LVal {
                 let st = ast_trans.local_sym_tab.borrow();
                 if let Some(binding) = st.get(ident) {
                     match binding {
-                        BindingItem::Int(val, num) => {
+                        BindingItem::ConstInt(val, num) => {
                             (*val, vec![])
-                        }
+                        },
+                        BindingItem::VarInt(val) => {
+                            (*val, vec![])
+                        },
+                        _ => unimplemented!("Unimplement BindingItem type."),
                     }
                 } else {
                     panic!("undefined name.");
                 }
             },
-            _ => unimplemented!("Unlmplement LVal."),
+            _ => unimplemented!("Unimplement LVal."),
         }
     }
 }
@@ -459,8 +497,61 @@ pub struct ConstExp {
     pub exp: Exp,
 }
 
+// InitVal       ::= Exp;
+#[derive(Debug)]
+pub struct InitVal {
+    pub exp: Exp,
+}
+impl DeriveValue for InitVal {
+    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+        self.exp.to_value(func_data, ast_trans)
+    }
+}
+
+// VarDef        ::= IDENT | IDENT "=" InitVal;
+#[derive(Debug)]
+pub enum VarDef {
+    IDENT(String),
+    IDENTInitVal(String, InitVal),
+}
+
+// VarDecl       ::= BType VarDef {"," VarDef} ";";
+#[derive(Debug)]
+pub struct VarDecl {
+    pub btype: BType,
+    pub var_defs: Vec<VarDef>,
+}
+
+impl VarDecl {
+    pub fn to_bindngs(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> Vec<Value> {
+        let mut decl_insts = Vec::new();
+        for var_def in &self.var_defs {
+            match var_def {
+                VarDef::IDENT(ident) => {
+                    let (l_val, l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
+                    let binding = BindingItem::VarInt(l_val);
+                    ast_trans.insert_sym(ident, binding);
+                    decl_insts.extend(l_insts);
+                },
+                VarDef::IDENTInitVal(ident, init_val) => {
+                    let (l_val, mut l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
+                    let (r_val, r_insts) = init_val.to_value(func_data, ast_trans);
+                    let (s_val, s_insts) = AstTrans::build_store_op(func_data, l_val, r_val);
+                    l_insts.extend(r_insts);
+                    l_insts.extend(s_insts);
+                    let binding = BindingItem::VarInt(l_val);
+                    ast_trans.insert_sym(ident, binding);
+                    decl_insts.extend(l_insts);
+                }
+            }
+        }
+        decl_insts
+    }
+}
+
 pub enum BindingItem {
-    Int(Value, i32),
+    ConstInt(Value, i32),
+    VarInt(Value),
 }
 
 pub struct AstTrans {
@@ -509,10 +600,38 @@ impl AstTrans {
             (val, vec![val])
         }
     }
+    pub fn build_alloc_op(func_data: &mut FunctionData, ident: Option<String>, tk: TypeKind) -> (Value, Vec<Value>) {
+        let a_val = func_data.dfg_mut().new_value().alloc(Type::get(tk));
+        func_data.dfg_mut().set_value_name(a_val, ident);
+        (a_val, vec![a_val])
+    }
+    pub fn build_store_op(func_data: &mut FunctionData, l_val: Value, r_val: Value) -> (Value, Vec<Value>) {
+        let s_val = func_data.dfg_mut().new_value().store(r_val, l_val);
+        (s_val, vec![s_val])
+    }
+    pub fn build_load_op(func_data: &mut FunctionData, val: Value) -> (Value, Vec<Value>) {
+        let l_val = func_data.dfg_mut().new_value().load(val);
+        (l_val, vec![l_val])
+    }
+    pub fn build_ret_op(func_data: &mut FunctionData, res: Option<Value>) -> (Value, Vec<Value>) {
+        let ret_val = func_data.dfg_mut().new_value().ret(res);
+        (ret_val, vec![ret_val])
+    }
     pub fn const_num(val_data: &ValueData) -> i32 {
         match val_data.kind() {
             ValueKind::Integer(int) => int.value(),
             _ => panic!("Not a Integer, maybe not implement."),
         }
     }
+    pub fn insert_sym(&self, name: &String, binding: BindingItem) {
+        let mut st = self.local_sym_tab.borrow_mut();
+        st.insert(name.clone(), binding);
+    }
+}
+use koopa::back::KoopaGenerator;
+pub fn koopa_to_string(program: & Program) -> String {
+    let mut gen = KoopaGenerator::new(Vec::new());
+    gen.generate_on(program).unwrap();
+    let text_form_ir = std::str::from_utf8(&gen.writer()).unwrap().to_string();
+    return text_form_ir;
 }

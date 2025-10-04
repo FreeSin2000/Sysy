@@ -8,9 +8,9 @@ use std::io::Result;
 // 因为我们刚刚创建了 sysy.lalrpop, 所以模块名是 sysy
 lalrpop_mod!(sysy);
 mod ast;
-mod koopa_utils;
-use koopa_utils::*;
-use crate::koopa_utils::GenerateAsm;
+// mod koopa_utils;
+// use koopa_utils::*;
+// use crate::koopa_utils::GenerateAsm;
 use ast::*;
 
 fn main() -> Result<()> {
@@ -33,16 +33,16 @@ fn main() -> Result<()> {
 
   let ast_trans = AstTrans::new();
   let program = ast_trans.to_koopa(&ast);
-  let program_str = KoopaTrans::to_string(&program);
-
+  
+  let program_str = koopa_to_string(&program);
   println!("koopa:\n{}", program_str);
   
-  let koopa_trans = KoopaTrans::new();
-  let asm_str = koopa_trans.to_asm(&program);
-  println!("riscv:\n{}", asm_str);
+  // let koopa_trans = KoopaTrans::new();
+  // let asm_str = koopa_trans.to_asm(&program);
+  // println!("riscv:\n{}", asm_str);
   match mode.as_str() {
     "-koopa" => write(output, program_str)?,
-    "-riscv" => write(output, asm_str)?,
+    // "-riscv" => write(output, asm_str)?,
     _ => todo!("not implement other modes."),
   }
   Ok(())

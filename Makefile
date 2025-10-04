@@ -10,7 +10,7 @@ debug:
 run:
 	mkdir -p $(CARGO_PATH)/registry
 	docker run -it --rm -w /root/compiler -v $(CARGO_PATH)/registry:/root/.cargo/registry -v $(PROJ_PATH):/root/compiler maxxing/compiler-dev \
-		bash -c "cargo run -- -$(MODE) hello.c -o hello.koopa"
+		bash -c "RUST_BACKTRACE=1 cargo run -- -$(MODE) hello.c -o hello.koopa"
 
 test:
 	mkdir -p $(CARGO_PATH)/registry

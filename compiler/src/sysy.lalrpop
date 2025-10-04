@@ -31,8 +31,12 @@ FuncType: FuncType = <btype: BType> => match <> {
 Block: Block = {
   "{" <block_items: BlockItem*> "}" => Block{<>}
 }
-
-Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { <> };
+// Stmt          ::= LVal "=" Exp ";"
+//                 | "return" Exp ";";
+Stmt: Stmt = {
+  "return" <exp: Exp> ";" => Stmt::RetExp(<>),
+  <lval: LVal> "=" <exp: Exp> ";" => Stmt::LValExp(lval, exp),
+}
 
 // Exp         ::= LOrExp;
 Exp: Exp = <lor_exp: LOrExp> => Exp {lor_exp:Box::new(<>)};
@@ -98,8 +102,11 @@ LOrExp: LOrExp = {
   <lor_exp: LOrExp> "||" <land_exp: LAndExp> => LOrExp::LOrOpExp(Box::new(lor_exp), land_exp),
 }
 
-// Decl          ::= ConstDecl;
-Decl: Decl = <const_decl: ConstDecl> => Decl::ConstDecl(const_decl);
+// Decl          ::= ConstDecl | VarDecl;
+Decl: Decl = {
+  <const_decl: ConstDecl> => Decl::ConstDecl(const_decl),
+  <var_decl: VarDecl> => Decl::VarDecl(var_decl),
+}
 
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
 
@@ -133,6 +140,18 @@ LVal: LVal = <ident: Ident> => LVal::IDENT(<>);
 
 // ConstExp      ::= Exp;
 ConstExp: ConstExp = <exp: Exp> => ConstExp { <> };
+
+// InitVal       ::= Exp;
+InitVal: InitVal = <exp: Exp> => InitVal{<>};
+
+// VarDef        ::= IDENT | IDENT "=" InitVal;
+VarDef: VarDef = {
+  <ident: Ident> => VarDef::IDENT(<>),
+  <ident: Ident> "=" <init_val: InitVal> => VarDef::IDENTInitVal(ident, init_val),
+}
+
+// VarDecl       ::= BType VarDef {"," VarDef} ";";
+VarDecl: VarDecl = <btype: BType> <var_defs: Comma<VarDef>> ";" => VarDecl{btype, var_defs};
 
 // 如果匹配到标识符, 就返回这个字符串
 // 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)
