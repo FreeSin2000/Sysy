@@ -7,8 +7,8 @@
 //   return 0;
 // }
 int main() {
-  int x = 10 + 1145;
-  x = x + 1;
+  int i = 114, j = 514;
+  int x = (i+233) * (j + 666);
   return x;
 }
 
