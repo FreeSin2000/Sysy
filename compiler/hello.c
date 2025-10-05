@@ -6,12 +6,12 @@
 //   int i, j = 114, k;
 //   return 0;
 // }
-// int main() {
-//   int i = 114, j = 514;
-//   int x = (i+233) * (j + 666);
-//   return x;
-// }
-
 int main() {
-  return 1 || 233 && 666;
+  int i = 114, j = 514;
+  int x = (i+233) * (j + 666);
+  return x;
 }
+
+// int main() {
+//   return 1 || 233 && 666;
+// }
