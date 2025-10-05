@@ -30,15 +30,15 @@ fn main() -> Result<()> {
   // 输出解析得到的 AST
   println!("ast:\n{:#?}", ast);
 
-  let ast_trans = AstTrans::new();
-  let program = ast_trans.to_koopa(&ast);
-  
-  let program_str = koopa_to_string(&program);
+  let mut ast_trans = AstTrans::new();
+  ast.build_program(&mut ast_trans);
+  let program = &ast_trans.koopa_program; 
+  let program_str = koopa_to_string(program);
   println!("koopa:\n{}", program_str);
   
   let mut koopa_trans = KoopaTrans::new();
-  koopa_trans.pre_analyze(&program);
-  let asm_str = koopa_trans.generate_program(&program);
+  koopa_trans.pre_analyze(program);
+  let asm_str = koopa_trans.generate_program(program);
   println!("riscv:\n{}", asm_str);
   match mode.as_str() {
     "-koopa" => write(output, program_str)?,

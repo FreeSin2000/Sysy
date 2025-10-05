@@ -10,10 +10,9 @@ pub struct CompUnit {
     pub func_def: FuncDef,
 }
 impl CompUnit {
-    pub fn to_program(&self, ast_trans: &AstTrans) -> Program {
-        let mut program = Program::new();
-        self.func_def.build_func(&mut program, ast_trans);
-        program
+    pub fn build_program(&self, ast_trans: &mut AstTrans) {
+        *ast_trans = AstTrans::new();
+        self.func_def.build_func(ast_trans);
     }
 }
 
@@ -26,16 +25,16 @@ pub struct FuncDef {
 }
 
 impl FuncDef {
-    pub fn build_func(&self, program: &mut Program, ast_trans: &AstTrans) {
+    pub fn build_func(&self, ast_trans: &mut AstTrans) {
         let name = String::from("@") + &self.ident;
         let params_ty = vec![];
         let ret_ty = match &self.func_type {
             FuncType::Int => Type::get_i32(),
         };       
-        let main_func = program.new_func(FunctionData::with_param_names(name.into(), params_ty, ret_ty));
-        self.block.build_bbs(program.func_mut(main_func), ast_trans);
-        let mut st = ast_trans.local_sym_tab.borrow_mut();
-        st.clear();
+        let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
+        ast_trans.set_func(func);
+        let func_data = ast_trans.get_func_data_mut();
+        self.block.build_bbs(ast_trans);
     }
 }
 
@@ -51,26 +50,32 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn build_bbs(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) {
-        let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
-        func_data.layout_mut().bbs_mut().extend([entry_bb]);
+    pub fn build_bbs(&self, ast_trans: &mut AstTrans) {
+
+        // let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
+        let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
+
+        // func_data.layout_mut().bbs_mut().extend([entry_bb]);
+        ast_trans.extend_bb(entry_bb);
+        ast_trans.set_bb(entry_bb);
         for block_item in &self.block_items {
             match block_item {
                 BlockItem::Decl(decl) => {
                     match decl {
                         Decl::ConstDecl(const_decl) => {
-                            const_decl.build_bindings(func_data, ast_trans);
+                            const_decl.build_bindings(ast_trans); 
                         },
                         Decl::VarDecl(var_decl) => {
-                            let insts = var_decl.to_bindngs(func_data, ast_trans);
-                            func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
+                            var_decl.build_bindngs(ast_trans);
+                            // func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
                         }
                         _ => unimplemented!("Not implement other decl."),
                     }
                 },
                 BlockItem::Stmt(stmt) => {
-                    let (_, insts) = stmt.to_value(func_data, ast_trans);
-                    func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
+                    // let (_, insts) = stmt.to_value(func_data, ast_trans);
+                    stmt.accept(ast_trans);
+                    // func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
                 },
             };
         }
@@ -85,26 +90,31 @@ pub enum Stmt {
     RetExp(Exp),
 }
 
-pub trait DeriveValue {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>);
+pub trait Visitable {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value>;
 }
-impl DeriveValue for Stmt {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for Stmt {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
             Self::LValExp(lval, exp) => {
-                let (l_val, mut l_insts) = lval.to_value(func_data, ast_trans);
-                let (r_val, r_insts) = exp.to_value(func_data, ast_trans);
-                let (s_val, s_insts) = AstTrans::build_store_op(func_data, l_val, r_val);
-                l_insts.extend(r_insts);
-                l_insts.extend(s_insts);
-                (l_val, l_insts)
+                // let (l_val, mut l_insts) = lval.to_value(func_data, ast_trans);
+                let l_val = lval.accept(ast_trans).unwrap();
+                // let (r_val, r_insts) = exp.to_value(func_data, ast_trans);
+                let r_val = exp.accept(ast_trans).unwrap();
+                // let (s_val, s_insts) = AstTrans::build_store_op(func_data, l_val, r_val);
+                let s_val = ast_trans.new_store(r_val, l_val);
+                // l_insts.extend(r_insts);
+                // l_insts.extend(s_insts);
+                // (l_val, l_insts)
+                Some(l_val)
             },
             Self::RetExp(exp) => {
-                let (res, mut insts) = exp.to_value(func_data, ast_trans);
-                let (ret, ret_insts) = AstTrans::build_ret_op(func_data, Some(res));
-                // let ret = func_data.dfg_mut().new_value().ret(Some(res));
-                insts.extend(ret_insts);
-                (ret, insts)
+                // let (res, mut insts) = exp.to_value(func_data, ast_trans);
+                let res = exp.accept(ast_trans).unwrap();
+                // let (ret, ret_insts) = AstTrans::build_ret_op(func_data, Some(res));
+                let ret = ast_trans.new_ret(Some(res));
+                // insts.extend(ret_insts);
+                Some(ret)
             }
         }
     }
@@ -115,12 +125,13 @@ pub enum Number {
     INT_CONST(i32),
 }
 
-impl DeriveValue for Number {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for Number {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
             Number::INT_CONST(num) => {
-                let val = func_data.dfg_mut().new_value().integer(*num);
-                (val, vec![])
+                // let val = func_data.dfg_mut().new_value().integer(*num);
+                let val = ast_trans.new_integer(*num);
+                Some(val)
             },
         }
     }
@@ -140,26 +151,33 @@ pub enum UnaryExp {
     UnaryOpExp(UnaryOp, Box<UnaryExp>),
 }
 
-impl DeriveValue for UnaryExp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for UnaryExp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
-            UnaryExp::PrimaryExp(primary_exp) => primary_exp.to_value(func_data, ast_trans),
+            UnaryExp::PrimaryExp(primary_exp) => primary_exp.accept(ast_trans),
             UnaryExp::UnaryOpExp(unary_op, unary_exp) => {
                 match unary_op {
-                    UnaryOp::Plus => unary_exp.to_value(func_data, ast_trans),
+                    UnaryOp::Plus => unary_exp.accept(ast_trans),
                     UnaryOp::Minus => {
-                        let lhs = func_data.dfg_mut().new_value().integer(0);
-                        let (rhs, mut insts) = unary_exp.to_value(func_data, ast_trans);
-                        let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Sub);
-                        insts.extend(val_insts);
-                        (val, insts)
+                        // let lhs = func_data.dfg_mut().new_value().integer(0);
+                        let lhs = ast_trans.new_integer(0);
+                        // let (rhs, mut insts) = unary_exp.to_value(func_data, ast_trans);
+                        let rhs = unary_exp.accept(ast_trans).unwrap();
+                        // let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Sub);
+                        let val = ast_trans.new_binary(BinaryOp::Sub, lhs, rhs);
+                        // insts.extend(val_insts);
+                        Some(val)
                     },
                     UnaryOp::Not => {
-                        let rhs  = func_data.dfg_mut().new_value().integer(0);
-                        let (lhs, mut insts) = unary_exp.to_value(func_data, ast_trans);
-                        let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Eq); 
-                        insts.extend(val_insts);
-                        (val, insts)
+                        // let rhs  = func_data.dfg_mut().new_value().integer(0);
+                        let rhs = ast_trans.new_integer(0);
+                        // let (lhs, mut insts) = unary_exp.to_value(func_data, ast_trans);
+                        let lhs = unary_exp.accept(ast_trans).unwrap();
+                        // let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Eq); 
+                        let val = ast_trans.new_binary(BinaryOp::Eq, lhs, rhs);
+                        // insts.extend(val_insts);
+                        // (val, insts)
+                        Some(val)
                     },
                 }
             }
@@ -175,25 +193,28 @@ pub enum PrimaryExp {
     Number(Number),
 }
 
-impl DeriveValue for PrimaryExp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>){
+impl Visitable for PrimaryExp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
-            PrimaryExp::ParenthesizedExp(exp) => exp.to_value(func_data, ast_trans),
+            PrimaryExp::ParenthesizedExp(exp) => exp.accept(ast_trans),
             PrimaryExp::LVal(lval) => {
-                let (val, mut val_insts) = lval.to_value(func_data, ast_trans);
-                let val_data = func_data.dfg().value(val);
-                match val_data.kind() {
-                    ValueKind::Integer(int) => (val, val_insts),
-                    ValueKind::Binary(binary) =>(val, val_insts),
+                // let (val, mut val_insts) = lval.to_value(func_data, ast_trans);
+                let val = lval.accept(ast_trans).unwrap(); 
+                // let val_data = func_data.dfg().value(val);
+                match ast_trans.get_value_kind(val) {
+                    ValueKind::Integer(int) => Some(val),
+                    ValueKind::Binary(binary) => Some(val),
                     ValueKind::Alloc(alloc) => {
-                        let (load_val, load_insts) = AstTrans::build_load_op(func_data, val);
-                        val_insts.extend(load_insts);
-                        (load_val, val_insts)
+                        // let (load_val, load_insts) = AstTrans::build_load_op(func_data, val);
+                        let load_val = ast_trans.new_load(val);
+                        // val_insts.extend(load_insts);
+                        // (load_val, val_insts)
+                        Some(load_val)
                     }
                     _ => unimplemented!("Unimplement LVal kind."),
                 }
             },
-            PrimaryExp::Number(num) => num.to_value(func_data, ast_trans),
+            PrimaryExp::Number(num) => num.accept(ast_trans),
         }
     }
 }
@@ -203,9 +224,9 @@ pub struct Exp {
     pub lor_exp: Box<LOrExp>,
 }
 
-impl DeriveValue for Exp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
-        return self.lor_exp.to_value(func_data, ast_trans);
+impl Visitable for Exp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
+        self.lor_exp.accept(ast_trans)
     }
 }
 
@@ -222,21 +243,24 @@ pub enum MulExp {
     MulOpExp(Box<MulExp>, MulOp, UnaryExp),
 }
 
-impl DeriveValue for MulExp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for MulExp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
-            MulExp::UnaryExp(unary_exp) => unary_exp.to_value(func_data, ast_trans),
+            MulExp::UnaryExp(unary_exp) => unary_exp.accept(ast_trans),
             MulExp::MulOpExp(mul_exp, mul_op, unary_exp) => {
-                let (lhs, mut l_insts) = mul_exp.to_value(func_data, ast_trans);
-                let (rhs, r_insts) = unary_exp.to_value(func_data, ast_trans);
-                let (val, val_insts) = match mul_op {
-                    MulOp::Mul => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Mul),
-                    MulOp::Div => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Div),
-                    MulOp::Mod => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Mod),
+                // let (lhs, mut l_insts) = mul_exp.to_value(func_data, ast_trans);
+                let lhs = mul_exp.accept(ast_trans).unwrap();
+                // let (rhs, r_insts) = unary_exp.to_value(func_data, ast_trans);
+                let rhs = unary_exp.accept(ast_trans).unwrap();
+                let val = match mul_op {
+                    MulOp::Mul => ast_trans.new_binary(BinaryOp::Mul, lhs, rhs),
+                    MulOp::Div => ast_trans.new_binary(BinaryOp::Div, lhs, rhs),
+                    MulOp::Mod => ast_trans.new_binary(BinaryOp::Mod, lhs, rhs),
                 };
-                l_insts.extend(r_insts);
-                l_insts.extend(val_insts);
-                (val, l_insts)
+                // l_insts.extend(r_insts);
+                // l_insts.extend(val_insts);
+                // (val, l_insts)
+                Some(val)
             }
         }
     }
@@ -252,20 +276,21 @@ pub enum AddExp {
     MulExp(MulExp),
     AddOpExp(Box<AddExp>, AddOp, MulExp),
 }
-impl DeriveValue for AddExp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for AddExp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
-            AddExp::MulExp(mul_exp) => mul_exp.to_value(func_data, ast_trans),
+            AddExp::MulExp(mul_exp) => mul_exp.accept(ast_trans),
             AddExp::AddOpExp(add_exp, add_op, mul_exp) => {
-                let (lhs, mut l_insts) = add_exp.to_value(func_data, ast_trans);
-                let (rhs, r_insts) = mul_exp.to_value(func_data, ast_trans);
-                let (val, val_insts) = match add_op {
-                    AddOp::Add => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Add),
-                    AddOp::Sub => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Sub),
+                let lhs = add_exp.accept(ast_trans).unwrap();
+                let rhs = mul_exp.accept(ast_trans).unwrap();
+                let val = match add_op {
+                    AddOp::Add => ast_trans.new_binary(BinaryOp::Add, lhs, rhs),
+                    AddOp::Sub => ast_trans.new_binary(BinaryOp::Sub, lhs, rhs),
                 };
-                l_insts.extend(r_insts);
-                l_insts.extend(val_insts);
-                (val, l_insts)
+                // l_insts.extend(r_insts);
+                // l_insts.extend(val_insts);
+                // (val, l_insts)
+                Some(val)
             }
         }
     }
@@ -278,22 +303,23 @@ pub enum RelExp {
     RelOpExp(Box<RelExp>, RelOp, AddExp),
 }
 
-impl DeriveValue for RelExp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for RelExp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
-            RelExp::AddExp(add_exp) => add_exp.to_value(func_data, ast_trans),
+            RelExp::AddExp(add_exp) => add_exp.accept(ast_trans),
             RelExp::RelOpExp(rel_exp, rel_op, add_exp) => {
-                let (lhs, mut l_insts) = rel_exp.to_value(func_data, ast_trans);
-                let (rhs, r_insts) = add_exp.to_value(func_data, ast_trans);
-                let (val, val_insts) = match rel_op {
-                    RelOp::Gt => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Gt),
-                    RelOp::Lt => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Lt),
-                    RelOp::Ge => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Ge),
-                    RelOp::Le => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Le),
+                let lhs = rel_exp.accept(ast_trans).unwrap();
+                let rhs = add_exp.accept(ast_trans).unwrap();
+                let val = match rel_op {
+                    RelOp::Gt => ast_trans.new_binary(BinaryOp::Gt, lhs, rhs),
+                    RelOp::Lt => ast_trans.new_binary(BinaryOp::Lt, lhs, rhs),
+                    RelOp::Ge => ast_trans.new_binary(BinaryOp::Ge, lhs, rhs),
+                    RelOp::Le => ast_trans.new_binary(BinaryOp::Le, lhs, rhs),
                 };
-                l_insts.extend(r_insts);
-                l_insts.extend(val_insts);
-                (val, l_insts)
+                // l_insts.extend(r_insts);
+                // l_insts.extend(val_insts);
+                // (val, l_insts)
+                Some(val)
             }
         }
     }
@@ -315,20 +341,21 @@ pub enum EqExp {
     EqOpExp(Box<EqExp>, EqOp, RelExp),
 }
 
-impl DeriveValue for EqExp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for EqExp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
-            EqExp::RelExp(rel_exp) => rel_exp.to_value(func_data, ast_trans),
+            EqExp::RelExp(rel_exp) => rel_exp.accept(ast_trans),
             EqExp::EqOpExp(eq_exp, eq_op, rel_exp) => {
-                let (lhs, mut l_insts) = eq_exp.to_value(func_data, ast_trans);
-                let (rhs, r_insts) = rel_exp.to_value(func_data, ast_trans);
-                let (val, val_insts) = match eq_op {
-                    EqOp::Eq => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Eq),
-                    EqOp::NotEq => AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::NotEq),
+                let lhs = eq_exp.accept(ast_trans).unwrap();
+                let rhs = rel_exp.accept(ast_trans).unwrap();
+                let val = match eq_op {
+                    EqOp::Eq => ast_trans.new_binary(BinaryOp::Eq, lhs, rhs),
+                    EqOp::NotEq => ast_trans.new_binary(BinaryOp::NotEq, lhs, rhs),
                 };
-                l_insts.extend(r_insts);
-                l_insts.extend(val_insts);
-                (val, l_insts)
+                // l_insts.extend(r_insts);
+                // l_insts.extend(val_insts);
+                // (val, l_insts)
+                Some(val)
             }
         }
     }
@@ -347,25 +374,24 @@ pub enum LAndExp {
     LAndOpExp(Box<LAndExp>, EqExp),
 }
 
-impl DeriveValue for LAndExp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for LAndExp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
-            LAndExp::EqExp(eq_exp) => eq_exp.to_value(func_data, ast_trans),
+            LAndExp::EqExp(eq_exp) => eq_exp.accept(ast_trans),
             LAndExp::LAndOpExp(land_exp, eq_exp) => {
-                let (lhs, mut l_insts) = land_exp.to_value(func_data, ast_trans);
-                let (rhs, r_insts) = eq_exp.to_value(func_data, ast_trans);
-                let zero = func_data.dfg_mut().new_value().integer(0);
-                let (l_lhs, ll_insts) = AstTrans::build_binary_op(func_data, lhs, zero, BinaryOp::NotEq);
-                // let l_lhs = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, lhs, zero); 
-                let (l_rhs, lr_insts) = AstTrans::build_binary_op(func_data, rhs, zero, BinaryOp::NotEq);
-                // let l_rhs = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, rhs, zero); 
-                let (val, val_insts) = AstTrans::build_binary_op(func_data, l_lhs, l_rhs, BinaryOp::And);
-                // let val = func_data.dfg_mut().new_value().binary(BinaryOp::And, l_lhs, l_rhs);
-                l_insts.extend(r_insts);
-                l_insts.extend(ll_insts);
-                l_insts.extend(lr_insts);
-                l_insts.extend(val_insts);
-                (val, l_insts)
+                let lhs = land_exp.accept(ast_trans).unwrap();
+                let rhs = eq_exp.accept(ast_trans).unwrap();
+                let zero = ast_trans.new_integer(0);
+                let logic_lhs = ast_trans.new_binary(BinaryOp::NotEq, lhs, zero);
+                let logic_rhs = ast_trans.new_binary(BinaryOp::NotEq, rhs, zero);
+                let val = ast_trans.new_binary(BinaryOp::And, logic_lhs, logic_rhs);
+                // l_insts.extend(r_insts);
+                // l_insts.extend(ll_insts);
+                // l_insts.extend(lr_insts);
+                // l_insts.extend(val_insts);
+                // (val, l_insts)
+                // ast_trans.extend_insts(vec![logic_lhs, logic_rhs, val]);
+                Some(val)
             }
         }
     }
@@ -375,22 +401,22 @@ pub enum LOrExp {
     LAndExp(LAndExp),
     LOrOpExp(Box<LOrExp>, LAndExp),
 }
-impl DeriveValue for LOrExp {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for LOrExp {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
-            LOrExp::LAndExp(land_exp) => land_exp.to_value(func_data, ast_trans),
+            LOrExp::LAndExp(land_exp) => land_exp.accept(ast_trans),
             LOrExp::LOrOpExp(lor_exp, land_exp) => {
-                let (lhs, mut l_insts) = lor_exp.to_value(func_data, ast_trans);
-                let (rhs, r_insts) = land_exp.to_value(func_data, ast_trans);
-                let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Or);
-                // let val = func_data.dfg_mut().new_value().binary(BinaryOp::Or, lhs, rhs);
-                let zero = func_data.dfg_mut().new_value().integer(0);
-                let (l_val, lv_insts) = AstTrans::build_binary_op(func_data, val, zero, BinaryOp::NotEq);
-                // let l_val = func_data.dfg_mut().new_value().binary(BinaryOp::NotEq, val, zero); 
-                l_insts.extend(r_insts);
-                l_insts.extend(val_insts);
-                l_insts.extend(lv_insts);
-                (l_val, l_insts)
+                let lhs = lor_exp.accept(ast_trans).unwrap();
+                let rhs = land_exp.accept(ast_trans).unwrap();
+                let val = ast_trans.new_binary(BinaryOp::Or, lhs, rhs);
+                // let zero = func_data.dfg_mut().new_value().integer(0);
+                let zero = ast_trans.new_integer(0);
+                let logic_val = ast_trans.new_binary(BinaryOp::NotEq, zero, val);
+                // l_insts.extend(r_insts);
+                // l_insts.extend(val_insts);
+                // l_insts.extend(lv_insts);
+                // (l_val, l_insts)
+                Some(logic_val)
             }
         }
     }
@@ -411,15 +437,15 @@ pub struct ConstDecl {
 }
 
 impl ConstDecl {
-    fn build_bindings(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> () {
+    fn build_bindings(&self, ast_trans: &mut AstTrans) -> (){
         for const_def in &self.const_defs {
-            let (ident, val) = const_def.to_binding(func_data, ast_trans);
+            let (ident, val) = const_def.to_binding(ast_trans);
             match self.btype {
                 BType::Int => {
-                    let val_data = func_data.dfg().value(val);
-                    let num = AstTrans::const_num(val_data);
-                    let mut st = ast_trans.local_sym_tab.borrow_mut();
-                    st.insert(ident.clone(), BindingItem::ConstInt(val, num));
+                    // let val_data = ast_trans.get_value_data(val);
+                    // let num = AstTrans::const_num(val_data);
+                    let num = ast_trans.get_const(val);
+                    ast_trans.bind(ident.clone(), BindingItem::ConstInt(val, num));
                 },
                 _ => unimplemented!("Not implement other type bindings."),
             }
@@ -441,9 +467,9 @@ pub struct ConstDef {
 }
 
 impl ConstDef {
-    fn to_binding(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (String, Value) {
-        let (val, _) = self.const_init_val.const_exp.exp.to_value(func_data, ast_trans);
-        assert!(func_data.dfg().value(val).kind().is_const());
+    fn to_binding(&self, ast_trans: &mut AstTrans) -> (String, Value) {
+        let val = self.const_init_val.const_exp.exp.accept(ast_trans).unwrap();
+        assert!(ast_trans.get_value_kind(val).is_const());
         (self.ident.clone(), val)
     }
 }
@@ -468,18 +494,17 @@ pub enum BlockItem {
 pub enum LVal {
     IDENT(String),
 }
-impl DeriveValue for LVal {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
+impl Visitable for LVal {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
             LVal::IDENT(ident) => { 
-                let st = ast_trans.local_sym_tab.borrow();
-                if let Some(binding) = st.get(ident) {
+                if let Some(binding) = ast_trans.lookup(ident) {
                     match binding {
                         BindingItem::ConstInt(val, num) => {
-                            (*val, vec![])
+                            Some(*val)
                         },
                         BindingItem::VarInt(val) => {
-                            (*val, vec![])
+                            Some(*val)
                         },
                         _ => unimplemented!("Unimplement BindingItem type."),
                     }
@@ -502,9 +527,9 @@ pub struct ConstExp {
 pub struct InitVal {
     pub exp: Exp,
 }
-impl DeriveValue for InitVal {
-    fn to_value(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> (Value, Vec<Value>) {
-        self.exp.to_value(func_data, ast_trans)
+impl Visitable for InitVal {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
+        self.exp.accept(ast_trans)
     }
 }
 
@@ -523,29 +548,33 @@ pub struct VarDecl {
 }
 
 impl VarDecl {
-    pub fn to_bindngs(&self, func_data: &mut FunctionData, ast_trans: &AstTrans) -> Vec<Value> {
-        let mut decl_insts = Vec::new();
+    pub fn build_bindngs(&self, ast_trans: &mut AstTrans) {
         for var_def in &self.var_defs {
             match var_def {
                 VarDef::IDENT(ident) => {
-                    let (l_val, l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
+                    // let (l_val, l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
+                    let l_val = ast_trans.new_alloc(Type::get(TypeKind::Int32));
+                    ast_trans.set_value_name(l_val, Some(String::from("@") + ident));
                     let binding = BindingItem::VarInt(l_val);
-                    ast_trans.insert_sym(ident, binding);
-                    decl_insts.extend(l_insts);
+                    ast_trans.bind(ident.to_string(), binding);
+                    // decl_insts.extend(l_insts);
                 },
                 VarDef::IDENTInitVal(ident, init_val) => {
-                    let (l_val, mut l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
-                    let (r_val, r_insts) = init_val.to_value(func_data, ast_trans);
-                    let (s_val, s_insts) = AstTrans::build_store_op(func_data, l_val, r_val);
-                    l_insts.extend(r_insts);
-                    l_insts.extend(s_insts);
+                    // let (l_val, mut l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
+                    let l_val = ast_trans.new_alloc(Type::get(TypeKind::Int32));
+                    ast_trans.set_value_name(l_val, Some(String::from("@") + ident));
                     let binding = BindingItem::VarInt(l_val);
-                    ast_trans.insert_sym(ident, binding);
-                    decl_insts.extend(l_insts);
+                    ast_trans.bind(ident.to_string(), binding);
+
+                    let r_val = init_val.accept(ast_trans).unwrap();
+                    // let (s_val, s_insts) = AstTrans::build_store_op(func_data, l_val, r_val);
+                    let s_val = ast_trans.new_store(r_val, l_val);
+                    // l_insts.extend(r_insts);
+                    // l_insts.extend(s_insts);
+
                 }
             }
         }
-        decl_insts
     }
 }
 
@@ -553,31 +582,98 @@ pub enum BindingItem {
     ConstInt(Value, i32),
     VarInt(Value),
 }
-
+pub struct AstContext {
+    pub func: Option<Function>,
+    pub bb: Option<BasicBlock>,
+    pub insts: Vec<Value>,
+}
+impl AstContext {
+    pub fn new() -> AstContext {
+        AstContext {
+            func: None,
+            bb: None,
+            insts: Vec::new(),
+        }
+    }
+}
 pub struct AstTrans {
-    pub local_sym_tab: RefCell<HashMap<String, BindingItem>>,
+    pub local_sym_tab: HashMap<String, BindingItem>,
+
+    pub koopa_program: Program,
+    pub cur_ctx: AstContext,
 }
 
 impl AstTrans {
     pub fn new() -> AstTrans {
-        AstTrans {local_sym_tab: RefCell::new(HashMap::new())}
+        AstTrans {
+            local_sym_tab: HashMap::new(),
+            koopa_program: Program::new(),
+            cur_ctx: AstContext::new(),
+        }
     }
-    pub fn to_koopa(&self, comp_unit: &CompUnit) -> Program {
-        comp_unit.to_program(self)
+
+    pub fn set_func(&mut self, func: Function) {
+        self.cur_ctx.func = Some(func);
     }
-    pub fn build_binary_op(func_data: &mut FunctionData, lhs: Value, rhs: Value, op: BinaryOp) -> (Value, Vec<Value>) {
-        let lhs_data = func_data.dfg().value(lhs);
-        let rhs_data = func_data.dfg().value(rhs);
-        if lhs_data.kind().is_const() && rhs_data.kind().is_const() {
-            let lhs_num = match lhs_data.kind() {
-                ValueKind::Integer(num) => num.value(),
-                _ => panic!("Not a number."), 
-            };
-            let rhs_num = match rhs_data.kind() {
-                ValueKind::Integer(num) => num.value(),
-                _ => panic!("Not a number!"), 
-            };
-            let val_num = match op {
+    pub fn set_bb(&mut self, bb: BasicBlock) {
+        self.cur_ctx.bb  = Some(bb);
+    }
+    pub fn set_value_name(&mut self, val: Value, name: Option<String>) {
+        let func_data = self.get_func_data_mut();
+        func_data.dfg_mut().set_value_name(val, name);
+    }
+
+    pub fn get_func(&mut self) -> Function {
+        self.cur_ctx.func.unwrap()
+    }
+    pub fn get_bb(&mut self) -> BasicBlock {
+        self.cur_ctx.bb.unwrap()
+    }
+
+    pub fn get_func_data(&mut self) -> &FunctionData {
+        let func = self.get_func();
+        self.koopa_program.func(func)
+    }
+    pub fn get_func_data_mut(&mut self) -> &mut FunctionData{
+        let func = self.get_func();
+        self.koopa_program.func_mut(func)
+    }
+
+    pub fn get_value_data(&mut self, val: Value) -> &ValueData {
+        let func_data = self.get_func_data();
+        func_data.dfg().value(val)
+    }
+    pub fn get_value_kind(&mut self, val: Value) -> &ValueKind {
+        let val_data = self.get_value_data(val);
+        val_data.kind()
+    }
+    pub fn get_const(&mut self, val: Value) -> i32 {
+        let val_data = self.get_value_data(val);
+        Self::const_num(val_data)
+    }
+    pub fn new_func(&mut self, func_name: String, func_params_ty: Vec<(Option<String>, Type)>, func_ret_ty: Type) -> Function {
+        self.koopa_program.new_func(FunctionData::with_param_names(func_name, func_params_ty, func_ret_ty))
+    }
+    pub fn new_basic_block(&mut self, bb_name: Option<String>) -> BasicBlock {
+        let func_data = self.get_func_data_mut();
+        func_data.dfg_mut().new_bb().basic_block(bb_name)
+    }
+
+    pub fn new_integer(&mut self, num: i32) -> Value {
+        let func_data = self.get_func_data_mut();
+        func_data.dfg_mut().new_value().integer(num)
+    }
+    pub fn new_ret(&mut self, res: Option<Value>) -> Value {
+        let func_data = self.get_func_data_mut();
+        let ret_val = func_data.dfg_mut().new_value().ret(res);
+        self.extend_inst(ret_val);
+        ret_val
+    }
+    pub fn new_binary(&mut self, bin_op: BinaryOp, lhs: Value, rhs: Value) -> Value {
+        if self.get_value_kind(lhs).is_const() && self.get_value_kind(rhs).is_const() {
+            let lhs_num = self.get_const(lhs);
+            let rhs_num = self.get_const(rhs);
+            let val_num = match bin_op {
                 BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
                 BinaryOp::Eq => (lhs_num == rhs_num) as i32,
                 BinaryOp::Gt => (lhs_num > rhs_num) as i32,
@@ -593,39 +689,113 @@ impl AstTrans {
                 BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
                 _ => unimplemented!("Binary op not implement!"), 
             };
-            let val = func_data.dfg_mut().new_value().integer(val_num);
-            (val, vec![])
+            self.new_integer(val_num)
         } else {
-            let val = func_data.dfg_mut().new_value().binary(op, lhs, rhs);
-            (val, vec![val])
+            let func_data = self.get_func_data_mut();
+            let bin_val = func_data.dfg_mut().new_value().binary(bin_op, lhs, rhs);
+            self.extend_inst(bin_val);
+            bin_val
         }
     }
-    pub fn build_alloc_op(func_data: &mut FunctionData, ident: Option<String>, tk: TypeKind) -> (Value, Vec<Value>) {
-        let a_val = func_data.dfg_mut().new_value().alloc(Type::get(tk));
-        func_data.dfg_mut().set_value_name(a_val, ident);
-        (a_val, vec![a_val])
+
+    pub fn new_load(&mut self, val: Value) -> Value {
+        let func_data = self.get_func_data_mut();
+        let load_val = func_data.dfg_mut().new_value().load(val);
+        self.extend_inst(load_val);
+        load_val
     }
-    pub fn build_store_op(func_data: &mut FunctionData, l_val: Value, r_val: Value) -> (Value, Vec<Value>) {
-        let s_val = func_data.dfg_mut().new_value().store(r_val, l_val);
-        (s_val, vec![s_val])
+
+    pub fn new_store(&mut self, val: Value, dest: Value) -> Value {
+        let func_data = self.get_func_data_mut();
+        let store_val = func_data.dfg_mut().new_value().store(val, dest);
+        self.extend_inst(store_val); 
+        store_val
     }
-    pub fn build_load_op(func_data: &mut FunctionData, val: Value) -> (Value, Vec<Value>) {
-        let l_val = func_data.dfg_mut().new_value().load(val);
-        (l_val, vec![l_val])
+
+    pub fn new_alloc(&mut self, ty: Type) -> Value {
+        let func_data = self.get_func_data_mut();
+        let alloc_val = func_data.dfg_mut().new_value().alloc(ty);
+        self.extend_inst(alloc_val);
+        alloc_val
     }
-    pub fn build_ret_op(func_data: &mut FunctionData, res: Option<Value>) -> (Value, Vec<Value>) {
-        let ret_val = func_data.dfg_mut().new_value().ret(res);
-        (ret_val, vec![ret_val])
+
+    pub fn extend_bb(&mut self, bb: BasicBlock) {
+        let func_data = self.get_func_data_mut();
+        func_data.layout_mut().bbs_mut().extend(vec![bb]);
     }
+    pub fn extend_inst(&mut self, inst: Value) {
+        let bb = self.get_bb();
+        let func_data = self.get_func_data_mut();
+        func_data.layout_mut().bb_mut(bb).insts_mut().extend(vec![inst]);
+    }
+    pub fn extend_insts(&mut self, insts: Vec<Value>) {
+        let bb = self.get_bb();
+        let func_data = self.get_func_data_mut();
+        func_data.layout_mut().bb_mut(bb).insts_mut().extend(insts);
+    }
+    pub fn bind(&mut self, name: String, binding: BindingItem) {
+        self.local_sym_tab.insert(name, binding);
+    }
+    pub fn lookup(&mut self, name: &String) -> Option<&BindingItem> {
+        self.local_sym_tab.get(name)
+    }
+    // pub fn build_binary_op(func_data: &mut FunctionData, lhs: Value, rhs: Value, op: BinaryOp) -> (Value, Vec<Value>) {
+    //     let lhs_data = func_data.dfg().value(lhs);
+    //     let rhs_data = func_data.dfg().value(rhs);
+    //     if lhs_data.kind().is_const() && rhs_data.kind().is_const() {
+    //         let lhs_num = match lhs_data.kind() {
+    //             ValueKind::Integer(num) => num.value(),
+    //             _ => panic!("Not a number."), 
+    //         };
+    //         let rhs_num = match rhs_data.kind() {
+    //             ValueKind::Integer(num) => num.value(),
+    //             _ => panic!("Not a number!"), 
+    //         };
+    //         let val_num = match op {
+    //             BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
+    //             BinaryOp::Eq => (lhs_num == rhs_num) as i32,
+    //             BinaryOp::Gt => (lhs_num > rhs_num) as i32,
+    //             BinaryOp::Lt => (lhs_num < rhs_num) as i32,
+    //             BinaryOp::Ge => (lhs_num >= rhs_num) as i32,
+    //             BinaryOp::Le => (lhs_num <= rhs_num) as i32,
+    //             BinaryOp::Add => lhs_num + rhs_num,
+    //             BinaryOp::Sub => lhs_num - rhs_num,
+    //             BinaryOp::Mul => lhs_num * rhs_num,
+    //             BinaryOp::Div => lhs_num / rhs_num,
+    //             BinaryOp::Mod => lhs_num % rhs_num,
+    //             BinaryOp::Or => (lhs_num !=0 || rhs_num != 0) as i32,
+    //             BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
+    //             _ => unimplemented!("Binary op not implement!"), 
+    //         };
+    //         let val = func_data.dfg_mut().new_value().integer(val_num);
+    //         (val, vec![])
+    //     } else {
+    //         let val = func_data.dfg_mut().new_value().binary(op, lhs, rhs);
+    //         (val, vec![val])
+    //     }
+    // }
+    // pub fn build_alloc_op(func_data: &mut FunctionData, ident: Option<String>, tk: TypeKind) -> (Value, Vec<Value>) {
+    //     let a_val = func_data.dfg_mut().new_value().alloc(Type::get(tk));
+    //     func_data.dfg_mut().set_value_name(a_val, ident);
+    //     (a_val, vec![a_val])
+    // }
+    // pub fn build_store_op(func_data: &mut FunctionData, l_val: Value, r_val: Value) -> (Value, Vec<Value>) {
+    //     let s_val = func_data.dfg_mut().new_value().store(r_val, l_val);
+    //     (s_val, vec![s_val])
+    // }
+    // pub fn build_load_op(func_data: &mut FunctionData, val: Value) -> (Value, Vec<Value>) {
+    //     let l_val = func_data.dfg_mut().new_value().load(val);
+    //     (l_val, vec![l_val])
+    // }
+    // pub fn build_ret_op(func_data: &mut FunctionData, res: Option<Value>) -> (Value, Vec<Value>) {
+    //     let ret_val = func_data.dfg_mut().new_value().ret(res);
+    //     (ret_val, vec![ret_val])
+    // }
     pub fn const_num(val_data: &ValueData) -> i32 {
         match val_data.kind() {
             ValueKind::Integer(int) => int.value(),
             _ => panic!("Not a Integer, maybe not implement."),
         }
-    }
-    pub fn insert_sym(&self, name: &String, binding: BindingItem) {
-        let mut st = self.local_sym_tab.borrow_mut();
-        st.insert(name.clone(), binding);
     }
 }
 use koopa::back::KoopaGenerator;
