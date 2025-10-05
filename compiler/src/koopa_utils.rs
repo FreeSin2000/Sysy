@@ -87,12 +87,15 @@ impl KoopaTrans {
 
     pub fn generate_program(&mut self, program: &Program) -> String {
         let mut asm_str = String::from("");
-        asm_str.push_str("    .text\n");
+        let mut asm_dir = String::from("");
+        asm_dir.push_str("    .text\n");
         for &func in program.func_layout() {
             let func_data = program.func(func);
             asm_str.push_str(&self.generate_func(func_data));
+            let func_name = func_data.name().to_string();
+            asm_dir.push_str(&format!("    .global {}\n", &func_name[1..]));
         }
-        asm_str
+        asm_dir + &asm_str
     }
 
     pub fn generate_func(&mut self, func_data: &FunctionData) -> String {
@@ -136,11 +139,25 @@ impl KoopaTrans {
             ValueKind::Binary(binary) => {
                 self.handle_binary(func_data, binary, inst)
             },
-            ValueKind::Store(store_val) => String::from(""),
-            ValueKind::Load(load_val) => String::from(""),
+            ValueKind::Store(store_val) => self.handle_store(func_data, store_val),
+            ValueKind::Load(load_val) => self.handle_load(func_data, load_val, inst),
             ValueKind::Alloc(_) => String::from(""),
             _ => panic!("invalid inst"),
         }
+    }
+    pub fn handle_store(&mut self, func_data: &FunctionData, store_val: &Store) -> String {
+        let src_reg = self.reg_allocator.get_temp_reg();
+        let mut store_asm = String::from("");
+        store_asm.push_str(&self.load_operand(func_data, store_val.value(), &src_reg));
+        store_asm.push_str(&self.store_operand(func_data, store_val.dest(), &src_reg));
+        store_asm
+    }
+    pub fn handle_load(&mut self, func_data: &FunctionData, load_val: &Load, des_val: Value) -> String {
+        let des_reg = self.reg_allocator.get_temp_reg();
+        let mut load_asm = String::from("");
+        load_asm.push_str(&self.load_operand(func_data, load_val.src(), &des_reg));
+        load_asm.push_str(&self.store_operand(func_data, des_val, &des_reg));
+        load_asm
     }
     pub fn handle_ret(&mut self, func_data: &FunctionData, ret: &Return) -> String {
         let ret_val = ret.value().unwrap();
