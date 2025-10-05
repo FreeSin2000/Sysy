@@ -10,7 +10,6 @@ lalrpop_mod!(sysy);
 mod ast;
 mod koopa_utils;
 use koopa_utils::*;
-use crate::koopa_utils::GenerateAsm;
 use ast::*;
 
 fn main() -> Result<()> {
@@ -37,8 +36,9 @@ fn main() -> Result<()> {
   let program_str = koopa_to_string(&program);
   println!("koopa:\n{}", program_str);
   
-  let koopa_trans = KoopaTrans::new();
-  let asm_str = koopa_trans.to_asm(&program);
+  let mut koopa_trans = KoopaTrans::new();
+  koopa_trans.pre_analyze(&program);
+  let asm_str = koopa_trans.generate_program(&program);
   println!("riscv:\n{}", asm_str);
   match mode.as_str() {
     "-koopa" => write(output, program_str)?,

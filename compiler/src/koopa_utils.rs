@@ -2,6 +2,7 @@ use koopa::ir::*;
 use koopa::ir::layout::*;
 use koopa::ir::builder_traits::*;
 use koopa::ir::entities::*;
+use koopa::ir::values::*;
 
 use koopa::back::KoopaGenerator;
 use koopa::back::generator::NameManager;
@@ -11,258 +12,219 @@ use std::fmt::Write;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-// 根据内存形式 Koopa IR 生成汇编
-pub trait GenerateAsm {
-  fn generate(&self, koopa_trans: &KoopaTrans, asm_str: &mut String);
+pub struct RegisterAllocator;
+
+impl RegisterAllocator {
+    pub fn get_ret_reg(&mut self) -> String {
+        String::from("a0")
+    } 
+    pub fn get_binary_temps(&mut self) -> (String, String) {
+        (String::from("t0"), String::from("t1"))
+    }
+    pub fn get_temp_reg(&mut self) -> String {
+        String::from("t2")
+    }
 }
 
-impl GenerateAsm for Program {
-  fn generate(&self, koopa_trans: &KoopaTrans, asm_str: &mut String) {
-    asm_str.push_str("    .text\n");
-    for &func in self.func_layout() {
-        let func_name = self.func(func).name();
-        asm_str.push_str(&format!("    .global {}\n", &func_name[1..]));
-    }
-    for &func in self.func_layout() {
-        koopa_trans.enter_func_scope();
-        self.func(func).generate(koopa_trans, asm_str);
-        koopa_trans.exit_func_scope();
-    }
-  }
+pub struct FunctionAnalysis {
+    pub stack_frame_size:i32,
+    pub stack_value_offsets: HashMap<Value, i32>,
 }
-
-impl GenerateAsm for FunctionData {
-  fn generate(&self, koopa_trans: &KoopaTrans, asm_str: &mut String) {
-    let func_label = format!("{}:\n", &self.name()[1..]);
-    asm_str.push_str(&func_label);
-
-    // prologue
-    let mut local_area_size = 0;
-    for (_, bb_node) in self.layout().bbs() {
-        let insts = bb_node.insts();
-        for (&inst, _) in insts {
-            let inst_ty = self.dfg().value(inst).ty();
-            local_area_size += match inst_ty.kind() {
-                TypeKind::Unit => 0,
-                TypeKind::Int32 => 4,
-                TypeKind::Pointer(_) => {
-                    let mut vars_cnt = koopa_trans.vars_cnt.borrow_mut();
-                    let mut vars_offset = koopa_trans.vars_offset.borrow_mut();
-                    let inst_ptr: *const ValueData = self.dfg().value(inst);
-                    vars_offset.insert(inst_ptr, *vars_cnt);
-                    *vars_cnt += 1;
-                    4
-                },
-                _ => unimplemented!("Unimplement value(insts)."),
-            };
+impl FunctionAnalysis {
+    pub fn new() -> Self {
+        FunctionAnalysis {
+            stack_frame_size: 0,
+            stack_value_offsets: HashMap::new(),
         }
-    }
-    local_area_size = (local_area_size + 15) / 16 * 16;
-    assert!(local_area_size >= 0);
-    assert!(local_area_size > -2048 && local_area_size < 2048);
-    asm_str.push_str(&format!("    addi  sp, sp, {}\n", -local_area_size));
-
-    for (bb, bb_node) in self.layout().bbs() {
-        let bb_data = self.dfg().bb(*bb);
-        let bb_name = &bb_data.name().clone().unwrap();
-        asm_str.push_str(&bb_name[1..]);
-        asm_str.push_str(":\n"); 
-
-        let insts = bb_node.insts();
-
-        for (&inst, _) in insts {
-            asm_str.push_str(&koopa_trans.value_to_asm(self, inst));
-        }
-    }
-    asm_str.push_str(&format!("    addi  sp, sp, {}\n    ret\n", local_area_size));
-  }
+    } 
 }
-
-
 pub struct KoopaTrans {
-    nm: RefCell<NameManager>,
-    vars_offset: RefCell<HashMap<*const ValueData, i32>>,
-    vars_cnt: RefCell<i32>,
+    reg_allocator: RegisterAllocator,
+    func_analysis_cache: HashMap<String, FunctionAnalysis>,
 }
+
 impl KoopaTrans {
     pub fn new() -> KoopaTrans {
         KoopaTrans {
-            nm: RefCell::new(NameManager::new()),
-            vars_offset: RefCell::new(HashMap::new()),
-            vars_cnt: RefCell::new(0),
+            reg_allocator: RegisterAllocator,
+            func_analysis_cache: HashMap::new(),
         }
     }
-    pub fn vars_clear(&self) {
-        let mut vars_offset = self.vars_offset.borrow_mut();
-        vars_offset.clear();
-        let mut vars_cnt = self.vars_cnt.borrow_mut();
-        *vars_cnt = 0;
+    pub fn allocate_stack_slot(func_analysis: &mut FunctionAnalysis, value: Value, value_type: &Type) -> i32 {
+        if let Some(offset) = func_analysis.stack_value_offsets.get(&value) {
+            return *offset;
+        }
+
+        let size_bytes = match value_type.kind() {
+            TypeKind::Int32 => 4,
+            TypeKind::Pointer(_) => 4,
+            _ => panic!("Attempted to allocate stack space for an invalid type"),
+        };
+        let cur_size = func_analysis.stack_frame_size;
+        func_analysis.stack_value_offsets.insert(value, -cur_size);
+        func_analysis.stack_frame_size = cur_size + size_bytes;
+        cur_size + size_bytes
+    } 
+    pub fn pre_analyze(&mut self, program: &Program) {
+        for &func in program.func_layout() {
+            let func_data = program.func(func);
+            let func_name = func_data.name().to_string();
+            let mut func_analysis = FunctionAnalysis::new();
+            let mut cur_frame_size = 0;
+            for (&bb, bb_node) in func_data.layout().bbs() {
+                let insts = bb_node.insts();
+                for (&inst, inst_node) in insts {
+                    let inst_ty = func_data.dfg().value(inst).ty();
+                    if !inst_ty.is_unit() {
+                        cur_frame_size = Self::allocate_stack_slot(&mut func_analysis, inst, inst_ty);
+                    }
+                }
+            }
+            func_analysis.stack_frame_size = (cur_frame_size + 15) / 16 * 16;
+            self.func_analysis_cache.insert(func_name, func_analysis);
+        }
     }
-    pub fn enter_func_scope(&self) {
-        self.vars_clear();
-        let mut nm = self.nm.borrow_mut();
-        nm.enter_func_scope();
-    }
-    pub fn exit_func_scope(&self) {
-        let mut nm = self.nm.borrow_mut();
-        nm.exit_func_scope();
-        self.vars_clear();
-    }
-    pub fn to_asm(&self, program: &Program) -> String {
-        let mut asm_str = String::new();
-        program.generate(self, &mut asm_str);
+
+    pub fn generate_program(&mut self, program: &Program) -> String {
+        let mut asm_str = String::from("");
+        asm_str.push_str("    .text\n");
+        for &func in program.func_layout() {
+            let func_data = program.func(func);
+            asm_str.push_str(&self.generate_func(func_data));
+        }
         asm_str
     }
+
+    pub fn generate_func(&mut self, func_data: &FunctionData) -> String {
+        let mut asm_str = String::from("");
+        let func_name = func_data.name().to_string();
+
+        let func_analysis = self.func_analysis_cache.get(&func_name).unwrap();
+        let stack_frame_size = func_analysis.stack_frame_size;
+
+        let func_label = format!("{}:\n", &func_name[1..]);
+        asm_str.push_str(&func_label);
+
+        // prologue
+        asm_str.push_str(&format!("    addi  sp, sp, {}\n", -stack_frame_size));
+
+        for (bb, bb_node) in func_data.layout().bbs() {
+            let bb_data = func_data.dfg().bb(*bb);
+            let bb_name = &bb_data.name().clone().unwrap();
+            asm_str.push_str(&bb_name[1..]);
+            asm_str.push_str(":\n"); 
+
+            let insts = bb_node.insts();
+
+            for (&inst, _) in insts {
+                asm_str.push_str(&self.generate_inst(inst, func_data));
+            }
+        }
+
+        //epilogue
+        asm_str.push_str(&format!("    addi  sp, sp, {}\n    ret\n", stack_frame_size));
+        asm_str
+    }
+
+    pub fn generate_inst(&mut self, inst: Value, func_data: &FunctionData) -> String {
+        let inst_data = func_data.dfg().value(inst);
+        let inst_kind = inst_data.kind();
+        match inst_kind {
+            ValueKind::Return(ret) => {
+                self.handle_ret(func_data, ret)
+            },
+            ValueKind::Binary(binary) => {
+                self.handle_binary(func_data, binary, inst)
+            },
+            ValueKind::Store(store_val) => String::from(""),
+            ValueKind::Load(load_val) => String::from(""),
+            ValueKind::Alloc(_) => String::from(""),
+            _ => panic!("invalid inst"),
+        }
+    }
+    pub fn handle_ret(&mut self, func_data: &FunctionData, ret: &Return) -> String {
+        let ret_val = ret.value().unwrap();
+        let rd = self.reg_allocator.get_ret_reg();
+        self.load_operand(func_data, ret_val, &rd)
+    }
+
+    pub fn handle_binary(&mut self, func_data: &FunctionData, binary: &Binary, des_val: Value) -> String {
+        let (rs1, rs2) = self.reg_allocator.get_binary_temps();
+        let rd = self.reg_allocator.get_temp_reg();
+        let mut binary_asm = String::new();
+        binary_asm.push_str(&self.load_operand(func_data, binary.lhs(), &rs1)); 
+        binary_asm.push_str(&self.load_operand(func_data, binary.rhs(), &rs2)); 
+        let binary_inst = match binary.op() {
+            BinaryOp::Add => format!("    add   {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::Sub => format!("    sub   {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::Mul => format!("    mul   {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::Mod => format!("    rem   {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::Div => format!("    div   {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::And => format!("    and   {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::Or => format!("    or    {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::Lt => format!("    slt   {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::Gt => format!("    sgt   {}, {}, {}\n", rd, rs1, rs2),
+            BinaryOp::Le => {
+                format!("    sgt   {}, {}, {}\n    xori  {}, {}, {}\n", rd, rs1, rs2, rd, rd, 1)
+            },
+            BinaryOp::Ge => {
+                format!("    slt   {}, {}, {}\n    xori  {}, {}, {}\n", rd, rs1, rs2, rd, rd, 1)
+            },
+            BinaryOp::Eq => {
+                let xor_inst = format!("    xor   {}, {}, {}", rd, rs1, rs2); 
+                let seqz_inst = format!("    seqz  {}, {}", rd, rd); 
+                format!("{}\n{}\n", xor_inst, seqz_inst)
+            },
+            BinaryOp::NotEq => {
+                let xor_inst = format!("    xor   {}, {}, {}", rd, rs1, rs2); 
+                let seqz_inst = format!("    snez  {}, {}", rd, rd); 
+                format!("{}\n{}\n", xor_inst, seqz_inst)
+            },
+            _ => unimplemented!(),
+        };
+        binary_asm.push_str(&binary_inst);
+        let store_inst = self.store_operand(func_data, des_val, &rd);
+        binary_asm.push_str(&store_inst);
+        binary_asm
+    }
+    pub fn get_stack_offset(&mut self, func_data: &FunctionData, val: Value) -> i32 {
+        let func_name = func_data.name().to_string();
+        let func_analysis = self.func_analysis_cache.get(&func_name).unwrap();
+        *func_analysis.stack_value_offsets.get(&val).unwrap()
+    } 
+    pub fn get_const(val_data: &ValueData) -> i32 {
+        let val_kind = val_data.kind();
+        assert!(val_kind.is_const());
+        match val_kind {
+            ValueKind::Integer(int) => int.value(),
+            _ => panic!("Not a implemented const value."),
+        }
+    }
+    pub fn load_operand(&mut self, func_data: &FunctionData, src_val: Value, des_reg: &String) -> String {
+        let src_data = func_data.dfg().value(src_val);
+        if src_data.kind().is_const() {
+            let src_num = Self::get_const(src_data);
+            if src_num == 0 {
+                format!("    mv    {}, x0\n", des_reg)
+            } else {
+                format!("    li    {}, {}\n", des_reg, src_num.to_string())
+            }
+        } else {
+            let src_offset = self.get_stack_offset(func_data, src_val);
+            format!("    lw    {}, {}(sp)\n", des_reg, src_offset.to_string())
+        }
+    }
+    pub fn store_operand(&mut self, func_data: &FunctionData, des_val: Value, src_reg: &String) -> String {
+        let des_data = func_data.dfg().value(des_val);
+        let des_offset = self.get_stack_offset(func_data, des_val);
+        format!("    sw    {}, {}(sp)\n", src_reg, des_offset.to_string())
+    }
+
     pub fn program_to_string(program: & Program) -> String {
         let mut gen = KoopaGenerator::new(Vec::new());
         gen.generate_on(program).unwrap();
         let text_form_ir = std::str::from_utf8(&gen.writer()).unwrap().to_string();
         return text_form_ir;
-    }
-    pub fn value_to_name(&self, func_data: &FunctionData, val: Value) -> String {
-        let val_data = func_data.dfg().value(val);
-        let mut nm = self.nm.borrow_mut();
-        return nm.value_name(val_data).to_string()
-    }
-    pub fn value_to_offset(&self, func_data: &FunctionData, val: Value) -> i32 {
-        let val_data = func_data.dfg().value(val);
-        assert!(!val_data.kind().is_const());
-        let val_ty = val_data.ty();
-        match val_ty.kind() {
-            TypeKind::Pointer(_) => {
-                let vars_offset = self.vars_offset.borrow();
-                let var_ptr: *const ValueData = val_data;
-                *vars_offset.get(&var_ptr).unwrap() * 4
-            },
-            TypeKind::Int32 => {
-                let val_name = self.value_to_name(func_data, val);
-                (&val_name[1..].parse::<i32>().unwrap() + *self.vars_cnt.borrow()) * 4
-            },
-            _ => unimplemented!("Unimplement other value type(offset)."),
-        }
-    }
-
-    pub fn value_to_asm(&self, func_data: &FunctionData, val: Value) -> String {
-        let val_data = func_data.dfg().value(val); 
-        let val_kind = val_data.kind();
-        match val_kind {
-            ValueKind::Return(ret) => {
-                let ret_val = ret.value().unwrap();
-                let ret_data = func_data.dfg().value(ret_val);
-
-                if ret_data.kind().is_const() {
-                    let ret_name = self.value_to_asm(func_data, ret_val); 
-                    if ret_name == String::from("x0") {
-                        format!("    mv    a0, {}\n", ret_name)
-                    } else {
-                        format!("    li    a0, {}\n", ret_name)
-                    }
-                } else {
-                    let ret_offset = self.value_to_offset(func_data, ret_val);
-                    format!("    lw    a0, {}(sp)\n", ret_offset)
-                }
-            },
-            ValueKind::Integer(num) => {
-                let num_val = num.value();
-                if num_val == 0 {String::from("x0")} else {num_val.to_string()}
-            },
-            ValueKind::Binary(binary) => {
-                let mut asm_str = String::new();
-
-                let mut rs1 = String::from("t0");
-                let mut rs2 = String::from("t1");
-                let rd = String::from("t0");
-
-                let lhs = binary.lhs();
-                let lhs_asm = self.value_to_asm(func_data, lhs);
-                let lhs_data = func_data.dfg().value(lhs);
-
-                if lhs_data.kind().is_const() && lhs_asm != String::from("x0") {
-                    asm_str = asm_str + &format!("    li    {}, {}\n", rs1, lhs_asm);
-                } else {
-                    if lhs_asm == String::from("x0") {
-                        rs1 = String::from("x0");
-                        rs2 = String::from("t0");
-                    } else {
-                        let lhs_offset = self.value_to_offset(func_data, lhs);
-                        asm_str = asm_str + &format!("    lw    {}, {}(sp)\n", rs1, lhs_offset);
-                    }
-                }
-
-                let rhs = binary.rhs();
-                let rhs_asm = self.value_to_asm(func_data, rhs);
-                let rhs_data = func_data.dfg().value(rhs);
-
-                if rhs_data.kind().is_const() && rhs_asm != String::from("x0") {
-                    asm_str = asm_str + &format!("    li    {}, {}\n", rs2, rhs_asm);
-                } else {
-                    if rhs_asm == String::from("x0") {
-                        rs2 = String::from("x0");
-                    } else {
-                        let rhs_offset = self.value_to_offset(func_data, rhs);
-                        asm_str = asm_str + &format!("    lw    {}, {}(sp)\n", rs2, rhs_offset);
-                    }
-                }
-                let val_offset = self.value_to_offset(func_data, val);
-                asm_str + &match binary.op() {
-                    BinaryOp::Add => format!("    add   {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::Sub => format!("    sub   {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::Mul => format!("    mul   {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::Mod => format!("    rem   {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::Div => format!("    div   {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::And => format!("    and   {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::Or => format!("    or    {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::Lt => format!("    slt   {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::Gt => format!("    sgt   {}, {}, {}\n", rd, rs1, rs2),
-                    BinaryOp::Le => {
-                        format!("    sgt   {}, {}, {}\n    xori  {}, {}, {}\n", rd, rs1, rs2, rd, rd, 1)
-                    },
-                    BinaryOp::Ge => {
-                        format!("    slt   {}, {}, {}\n    xori  {}, {}, {}\n", rd, rs1, rs2, rd, rd, 1)
-                    },
-                    BinaryOp::Eq => {
-                        let xor_inst = format!("    xor   {}, {}, {}", rd, rs1, rs2); 
-                        let seqz_inst = format!("    seqz  {}, {}", rd, rd); 
-                        format!("{}\n{}\n", xor_inst, seqz_inst)
-                    },
-                    BinaryOp::NotEq => {
-                        let xor_inst = format!("    xor   {}, {}, {}", rd, rs1, rs2); 
-                        let seqz_inst = format!("    snez  {}, {}", rd, rd); 
-                        format!("{}\n{}\n", xor_inst, seqz_inst)
-                    },
-                    _ => unimplemented!(),
-                } + &format!("    sw    {}, {}(sp)\n", rd, val_offset)
-            },
-            ValueKind::Load(load_val) => {
-                let rd = String::from("t0");
-                let l_offset = self.value_to_offset(func_data, load_val.src());
-                let s_offset = self.value_to_offset(func_data, val);
-                println!("Load Ok\n");
-                format!("    lw    {}, {}(sp)\n    sw    {}, {}(sp)\n", rd, l_offset, rd, s_offset)
-            },
-            ValueKind::Store(store_val) => {
-                let s_val = store_val.value();
-                let dest_val = store_val.dest();
-                let mut rs1 = String::from("t0");
-                let dest_offset = self.value_to_offset(func_data, dest_val);
-
-                let pre_insts = if func_data.dfg().value(s_val).kind().is_const() {
-                    let s_asm = self.value_to_asm(func_data, s_val);
-                    if s_asm == String::from("x0") {
-                        rs1 = String::from("x0");
-                        String::new()
-                    } else {
-                        format!("    li    {}, {}\n", rs1, s_asm)
-                    }
-                } else {
-                    let s_offset = self.value_to_offset(func_data, s_val);
-                    format!("    lw    {}, {}(sp)\n", rs1, s_offset)
-                };
-                pre_insts + &format!("    sw    {}, {}(sp)\n", rs1, dest_offset)
-            } ,
-            ValueKind::Alloc(_) => String::from(""),
-            _ => todo!("Value Kind Unimplement!"),
-        }
     }
 }
 
