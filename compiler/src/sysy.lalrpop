@@ -35,6 +35,8 @@ Block: Block = {
 //                 | "return" Exp ";";
 Stmt: Stmt = {
   "return" <exp: Exp> ";" => Stmt::RetExp(<>),
+  <opt_exp: Exp?> ";" => Stmt::OptExp(<>),
+  <block: Block> => Stmt::Block(<>),
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::LValExp(lval, exp),
 }
 

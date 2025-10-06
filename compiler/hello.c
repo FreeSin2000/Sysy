@@ -7,8 +7,11 @@
 //   return 0;
 // }
 int main() {
-  int i = 114, j = 514;
-  int x = (i+233) * (j + 666);
+  int x;
+  {
+    int i = 114, j = 514;
+    x = (i + 233) * (j / 666);
+  }
   return x;
 }
 

@@ -18,6 +18,15 @@ impl CompUnit {
     }
 }
 
+impl Visitable for CompUnit {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
+        *ast_trans = AstTrans::new();
+        ast_trans.enter_scope();
+        self.func_def.build_func(ast_trans);
+        ast_trans.exit_scope();
+        None
+    }
+}
 
 #[derive(Debug)]
 pub struct FuncDef {
@@ -37,11 +46,31 @@ impl FuncDef {
         ast_trans.set_func(func);
         // ast_trans.enter_scope();
         let func_data = ast_trans.get_func_data_mut();
-        self.block.build_bbs(ast_trans);
-        // ast_trans.exit_scope();
+        let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
+        ast_trans.extend_bb(entry_bb);
+        ast_trans.set_bb(entry_bb);
+        self.block.accept(ast_trans);
     }
 }
 
+impl Visitable for FuncDef {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
+        let name = String::from("@") + &self.ident;
+        let params_ty = vec![];
+        let ret_ty = match &self.func_type {
+            FuncType::Int => Type::get_i32(),
+        };       
+        let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
+        ast_trans.set_func(func);
+        // ast_trans.enter_scope();
+        let func_data = ast_trans.get_func_data_mut();
+        let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
+        ast_trans.extend_bb(entry_bb);
+        ast_trans.set_bb(entry_bb);
+        self.block.accept(ast_trans);
+        None
+    }
+}
 #[derive(Debug)]
 pub enum FuncType {
     Int,
@@ -53,15 +82,16 @@ pub struct Block {
     pub block_items: Vec<BlockItem>,
 }
 
-impl Block {
-    pub fn build_bbs(&self, ast_trans: &mut AstTrans) {
+impl Visitable for Block {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
 
         // let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
-        let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
 
-        // func_data.layout_mut().bbs_mut().extend([entry_bb]);
-        ast_trans.extend_bb(entry_bb);
-        ast_trans.set_bb(entry_bb);
+        // let cur_uid = ast_trans.next_uid();
+        // let entry_bb = ast_trans.new_basic_block(Some("%entry_".to_string() + &cur_uid.to_string()));
+
+        // let entry_bb = ast_trans.new_basic_block(Some("%entry".to_string()));
+
         ast_trans.enter_scope();
         for block_item in &self.block_items {
             match block_item {
@@ -85,6 +115,7 @@ impl Block {
             };
         }
         ast_trans.exit_scope();
+        None
     }
 }
 
@@ -93,6 +124,8 @@ impl Block {
 #[derive(Debug)]
 pub enum Stmt {
     LValExp(LVal, Exp),
+    OptExp(Option<Exp>),
+    Block(Block),
     RetExp(Exp),
 }
 
@@ -113,6 +146,16 @@ impl Visitable for Stmt {
                 // l_insts.extend(s_insts);
                 // (l_val, l_insts)
                 Some(l_val)
+            },
+            Self::OptExp(opt_exp) => {
+                match opt_exp {
+                    Some(exp) => exp.accept(ast_trans),
+                    None => None,
+                }
+            },
+            Self::Block(block) => {
+                block.accept(ast_trans);
+                None
             },
             Self::RetExp(exp) => {
                 // let (res, mut insts) = exp.to_value(func_data, ast_trans);

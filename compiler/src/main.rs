@@ -31,7 +31,7 @@ fn main() -> Result<()> {
   println!("ast:\n{:#?}", ast);
 
   let mut ast_trans = AstTrans::new();
-  ast.build_program(&mut ast_trans);
+  ast.accept(&mut ast_trans);
   let program = &ast_trans.koopa_program; 
   let program_str = koopa_to_string(program);
   println!("koopa:\n{}", program_str);
