@@ -143,7 +143,59 @@ impl Visitable for Stmt {
                 // insts.extend(ret_insts);
                 Some(ret)
             },
-            Self::IfStmt(exp, then_stmt, else_stmt) => {
+            Self::IfStmt(exp, then_stmt, opt_else_stmt) => {
+                let cond_val = exp.accept(ast_trans).unwrap();
+                // let zero = ast_trans.new_integer(0);
+                // let cond_val = ast_trans.new_binary(BinaryOp::NotEq, cond_exp, zero);
+
+
+                let then_uid = ast_trans.next_uid();
+                let then_block = ast_trans.new_basic_block(Some(format!("%then_{}", then_uid.to_string())));
+
+                ast_trans.extend_bb(then_block);
+
+                match opt_else_stmt {
+                    Some(else_stmt) => {
+                        let else_uid = ast_trans.next_uid();
+                        let else_block = ast_trans.new_basic_block(Some(format!("%else_{}", else_uid.to_string())));
+
+                        let end_uid = ast_trans.next_uid();
+                        let end_block = ast_trans.new_basic_block(Some(format!("%end_{}", end_uid.to_string())));
+
+                        ast_trans.extend_bb(else_block);
+                        ast_trans.extend_bb(end_block);
+
+                        let br_inst = ast_trans.new_branch(cond_val, then_block, else_block);
+
+                        ast_trans.exit_bb();
+                        ast_trans.enter_bb(then_block);
+                        then_stmt.accept(ast_trans);
+                        ast_trans.new_jump(end_block);
+
+                        ast_trans.exit_bb();
+                        ast_trans.enter_bb(else_block);
+                        else_stmt.accept(ast_trans);
+                        ast_trans.new_jump(end_block);
+                        ast_trans.extend_bb(else_block);
+
+                        ast_trans.exit_bb();
+                        ast_trans.enter_bb(end_block);
+                    },
+                    None => {
+                        let end_uid = ast_trans.next_uid();
+                        let end_block = ast_trans.new_basic_block(Some(format!("%end_{}", end_uid.to_string())));
+                        let br_inst = ast_trans.new_branch(cond_val, then_block, end_block);
+                        ast_trans.extend_bb(end_block);
+
+                        ast_trans.exit_bb();
+                        ast_trans.enter_bb(then_block);
+                        then_stmt.accept(ast_trans);
+                        ast_trans.new_jump(end_block);
+
+                        ast_trans.exit_bb();
+                        ast_trans.enter_bb(end_block);
+                    },
+                };
                 None
             },
         }
@@ -776,6 +828,18 @@ impl AstTrans {
         let ret_val = func_data.dfg_mut().new_value().ret(res);
         self.extend_inst(ret_val);
         ret_val
+    }
+    pub fn new_jump(&mut self, dest_block: BasicBlock) -> Value {
+        let func_data = self.get_func_data_mut();
+        let jump_val = func_data.dfg_mut().new_value().jump(dest_block);
+        self.extend_inst(jump_val);
+        jump_val
+    }
+    pub fn new_branch(&mut self, cond_val: Value, then_block: BasicBlock, else_block: BasicBlock) -> Value {
+        let func_data = self.get_func_data_mut();
+        let branch_val = func_data.dfg_mut().new_value().branch(cond_val, then_block, else_block);
+        self.extend_inst(branch_val);
+        branch_val
     }
     pub fn new_binary(&mut self, bin_op: BinaryOp, lhs: Value, rhs: Value) -> Value {
         if self.get_value_kind(lhs).is_const() && self.get_value_kind(rhs).is_const() {
