@@ -12,7 +12,9 @@ pub struct CompUnit {
 impl CompUnit {
     pub fn build_program(&self, ast_trans: &mut AstTrans) {
         *ast_trans = AstTrans::new();
+        ast_trans.enter_scope();
         self.func_def.build_func(ast_trans);
+        ast_trans.exit_scope();
     }
 }
 
@@ -33,8 +35,10 @@ impl FuncDef {
         };       
         let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
         ast_trans.set_func(func);
+        // ast_trans.enter_scope();
         let func_data = ast_trans.get_func_data_mut();
         self.block.build_bbs(ast_trans);
+        // ast_trans.exit_scope();
     }
 }
 
@@ -58,6 +62,7 @@ impl Block {
         // func_data.layout_mut().bbs_mut().extend([entry_bb]);
         ast_trans.extend_bb(entry_bb);
         ast_trans.set_bb(entry_bb);
+        ast_trans.enter_scope();
         for block_item in &self.block_items {
             match block_item {
                 BlockItem::Decl(decl) => {
@@ -79,6 +84,7 @@ impl Block {
                 },
             };
         }
+        ast_trans.exit_scope();
     }
 }
 
@@ -554,7 +560,8 @@ impl VarDecl {
                 VarDef::IDENT(ident) => {
                     // let (l_val, l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
                     let l_val = ast_trans.new_alloc(Type::get(TypeKind::Int32));
-                    ast_trans.set_value_name(l_val, Some(String::from("@") + ident));
+                    let cur_uid = ast_trans.next_uid();
+                    ast_trans.set_value_name(l_val, Some(String::from("@") + ident + &format!("_{}", cur_uid.to_string())));
                     let binding = BindingItem::VarInt(l_val);
                     ast_trans.bind(ident.to_string(), binding);
                     // decl_insts.extend(l_insts);
@@ -562,7 +569,8 @@ impl VarDecl {
                 VarDef::IDENTInitVal(ident, init_val) => {
                     // let (l_val, mut l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
                     let l_val = ast_trans.new_alloc(Type::get(TypeKind::Int32));
-                    ast_trans.set_value_name(l_val, Some(String::from("@") + ident));
+                    let cur_uid = ast_trans.next_uid();
+                    ast_trans.set_value_name(l_val, Some(String::from("@") + ident + &format!("_{}", cur_uid.to_string())));
                     let binding = BindingItem::VarInt(l_val);
                     ast_trans.bind(ident.to_string(), binding);
 
@@ -596,9 +604,53 @@ impl AstContext {
         }
     }
 }
+pub struct ScopeStack {
+    pub stack: Vec<HashMap<String, BindingItem>>,
+    pub global_uid: i32,
+}
+impl ScopeStack {
+    pub fn new() -> ScopeStack {
+        ScopeStack {
+            stack: Vec::new(),
+            global_uid: -1,
+        }
+    }
+    pub fn push_scope(&mut self) {
+        self.stack.push(HashMap::new());
+    }
+
+    pub fn pop_scope(&mut self) -> Option<HashMap<String, BindingItem>> {
+        self.stack.pop()
+    }
+
+    pub fn new_uid(&mut self) -> i32 {
+        self.global_uid = self.global_uid + 1;
+        self.global_uid
+    }
+    pub fn cur_scope(&mut self) -> &HashMap<String, BindingItem> {
+        self.stack.last().unwrap()
+    }
+
+    pub fn cur_scope_mut(&mut self) -> &mut HashMap<String, BindingItem> {
+        self.stack.last_mut().unwrap()
+    }
+    pub fn get_binding(&mut self, name: &String) -> Option<&BindingItem> {
+        let cur_scope = self.cur_scope();
+        // cur_scope.get(name)
+        self.stack
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+    }
+    pub fn insert_binding(&mut self, name: &String, binding: BindingItem) {
+        let cur_scope = self.cur_scope_mut();
+        cur_scope.insert(name.to_string(), binding);
+    }
+}
+
 pub struct AstTrans {
     pub local_sym_tab: HashMap<String, BindingItem>,
-
+    pub scope_manager: ScopeStack,
     pub koopa_program: Program,
     pub cur_ctx: AstContext,
 }
@@ -609,6 +661,7 @@ impl AstTrans {
             local_sym_tab: HashMap::new(),
             koopa_program: Program::new(),
             cur_ctx: AstContext::new(),
+            scope_manager: ScopeStack::new(),
         }
     }
 
@@ -733,11 +786,24 @@ impl AstTrans {
         let func_data = self.get_func_data_mut();
         func_data.layout_mut().bb_mut(bb).insts_mut().extend(insts);
     }
+
+    pub fn enter_scope(&mut self) {
+        self.scope_manager.push_scope();
+    }
+    pub fn exit_scope(&mut self) {
+        self.scope_manager.pop_scope();
+    }
     pub fn bind(&mut self, name: String, binding: BindingItem) {
-        self.local_sym_tab.insert(name, binding);
+        // self.local_sym_tab.insert(name, binding);
+        self.scope_manager.insert_binding(&name, binding);
     }
     pub fn lookup(&mut self, name: &String) -> Option<&BindingItem> {
-        self.local_sym_tab.get(name)
+        // self.local_sym_tab.get(name)
+        self.scope_manager.get_binding(name)
+    }
+
+    pub fn next_uid(&mut self) -> i32 {
+        self.scope_manager.new_uid()
     }
     // pub fn build_binary_op(func_data: &mut FunctionData, lhs: Value, rhs: Value, op: BinaryOp) -> (Value, Vec<Value>) {
     //     let lhs_data = func_data.dfg().value(lhs);
