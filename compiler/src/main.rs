@@ -29,7 +29,6 @@ fn main() -> Result<()> {
   println!("mode:\n{}", mode);
   // 输出解析得到的 AST
   println!("ast:\n{:#?}", ast);
-
   let mut ast_trans = AstTrans::new();
   ast.accept(&mut ast_trans);
   let program = &ast_trans.koopa_program; 

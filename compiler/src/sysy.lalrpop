@@ -34,10 +34,25 @@ Block: Block = {
 // Stmt          ::= LVal "=" Exp ";"
 //                 | "return" Exp ";";
 Stmt: Stmt = {
+  <stmt: OpenIfStmt> => <>,
+  <stmt: ClosedIfStmt> => <>,
+}
+
+NoIfStmt: Stmt = {
   "return" <exp: Exp> ";" => Stmt::RetExp(<>),
   <opt_exp: Exp?> ";" => Stmt::OptExp(<>),
   <block: Block> => Stmt::Block(<>),
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::LValExp(lval, exp),
+}
+
+OpenIfStmt: Stmt = {
+  "if" "(" <exp: Exp> ")" <then_stmt: Stmt> => Stmt::IfStmt(exp, Box::new(then_stmt), None),
+  "if" "(" <exp: Exp> ")" <then_stmt: ClosedIfStmt> "else" <else_stmt: OpenIfStmt> => Stmt::IfStmt(exp, Box::new(then_stmt), Some(Box::new(else_stmt))),
+}
+
+ClosedIfStmt: Stmt = {
+  <stmt: NoIfStmt> => <>,
+  "if" "(" <exp: Exp> ")" <then_stmt: ClosedIfStmt> "else" <else_stmt: ClosedIfStmt> => Stmt::IfStmt(exp, Box::new(then_stmt), Some(Box::new(else_stmt))),
 }
 
 // Exp         ::= LOrExp;

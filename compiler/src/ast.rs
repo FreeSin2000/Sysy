@@ -9,20 +9,12 @@ use std::collections::HashMap;
 pub struct CompUnit {
     pub func_def: FuncDef,
 }
-impl CompUnit {
-    pub fn build_program(&self, ast_trans: &mut AstTrans) {
-        *ast_trans = AstTrans::new();
-        ast_trans.enter_scope();
-        self.func_def.build_func(ast_trans);
-        ast_trans.exit_scope();
-    }
-}
 
 impl Visitable for CompUnit {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         *ast_trans = AstTrans::new();
         ast_trans.enter_scope();
-        self.func_def.build_func(ast_trans);
+        self.func_def.accept(ast_trans);
         ast_trans.exit_scope();
         None
     }
@@ -35,24 +27,6 @@ pub struct FuncDef {
     pub block: Block,
 }
 
-impl FuncDef {
-    pub fn build_func(&self, ast_trans: &mut AstTrans) {
-        let name = String::from("@") + &self.ident;
-        let params_ty = vec![];
-        let ret_ty = match &self.func_type {
-            FuncType::Int => Type::get_i32(),
-        };       
-        let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
-        ast_trans.set_func(func);
-        // ast_trans.enter_scope();
-        let func_data = ast_trans.get_func_data_mut();
-        let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
-        ast_trans.extend_bb(entry_bb);
-        ast_trans.set_bb(entry_bb);
-        self.block.accept(ast_trans);
-    }
-}
-
 impl Visitable for FuncDef {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         let name = String::from("@") + &self.ident;
@@ -61,13 +35,16 @@ impl Visitable for FuncDef {
             FuncType::Int => Type::get_i32(),
         };       
         let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
-        ast_trans.set_func(func);
+        ast_trans.enter_func(func);
         // ast_trans.enter_scope();
         let func_data = ast_trans.get_func_data_mut();
-        let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
+        let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
         ast_trans.extend_bb(entry_bb);
-        ast_trans.set_bb(entry_bb);
+        // let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
+        ast_trans.enter_bb(entry_bb);
         self.block.accept(ast_trans);
+        ast_trans.exit_bb();
+        ast_trans.exit_func();
         None
     }
 }
@@ -127,6 +104,7 @@ pub enum Stmt {
     OptExp(Option<Exp>),
     Block(Block),
     RetExp(Exp),
+    IfStmt(Exp, Box<Stmt>, Option<Box<Stmt>>),
 }
 
 pub trait Visitable {
@@ -164,7 +142,10 @@ impl Visitable for Stmt {
                 let ret = ast_trans.new_ret(Some(res));
                 // insts.extend(ret_insts);
                 Some(ret)
-            }
+            },
+            Self::IfStmt(exp, then_stmt, else_stmt) => {
+                None
+            },
         }
     }
 }
@@ -634,19 +615,36 @@ pub enum BindingItem {
     VarInt(Value),
 }
 pub struct AstContext {
-    pub func: Option<Function>,
-    pub bb: Option<BasicBlock>,
-    pub insts: Vec<Value>,
+    pub funcs: Vec<Function>,
+    pub bbs: Vec<BasicBlock>,
 }
 impl AstContext {
     pub fn new() -> AstContext {
         AstContext {
-            func: None,
-            bb: None,
-            insts: Vec::new(),
+            funcs: Vec::new(),
+            bbs: Vec::new(),
         }
     }
+    pub fn push_bb(&mut self, bb: BasicBlock) {
+        self.bbs.push(bb);
+    }
+    pub fn push_func(&mut self, func: Function) {
+        self.funcs.push(func);
+    }
+    pub fn pop_bb(&mut self) {
+        self.bbs.pop();
+    }
+    pub fn pop_func(&mut self) {
+        self.funcs.pop();
+    }
+    pub fn get_bb(&mut self) -> BasicBlock {
+        *self.bbs.last().unwrap()
+    }
+    pub fn get_func(&mut self) -> Function {
+        *self.funcs.last().unwrap()
+    }
 }
+
 pub struct ScopeStack {
     pub stack: Vec<HashMap<String, BindingItem>>,
     pub global_uid: i32,
@@ -708,30 +706,44 @@ impl AstTrans {
         }
     }
 
-    pub fn set_func(&mut self, func: Function) {
-        self.cur_ctx.func = Some(func);
+    pub fn enter_func(&mut self, func: Function) {
+        self.cur_ctx.push_func(func);
     }
-    pub fn set_bb(&mut self, bb: BasicBlock) {
-        self.cur_ctx.bb  = Some(bb);
+    pub fn enter_bb(&mut self, bb: BasicBlock) {
+        self.cur_ctx.push_bb(bb);
     }
+
+    pub fn exit_func(&mut self) {
+        self.cur_ctx.pop_func();
+    }
+    pub fn exit_bb(&mut self) {
+        self.cur_ctx.pop_bb();
+    }
+
+    pub fn get_cur_func(&mut self) -> Function {
+        self.cur_ctx.get_func()
+    }
+
+    pub fn get_cur_bb(&mut self) -> BasicBlock {
+        self.cur_ctx.get_bb()
+    }
+
+    pub fn extend_bb(&mut self, bb: BasicBlock) {
+        let func_data = self.get_func_data_mut();
+        func_data.layout_mut().bbs_mut().extend(vec![bb]);
+    }
+
     pub fn set_value_name(&mut self, val: Value, name: Option<String>) {
         let func_data = self.get_func_data_mut();
         func_data.dfg_mut().set_value_name(val, name);
     }
 
-    pub fn get_func(&mut self) -> Function {
-        self.cur_ctx.func.unwrap()
-    }
-    pub fn get_bb(&mut self) -> BasicBlock {
-        self.cur_ctx.bb.unwrap()
-    }
-
     pub fn get_func_data(&mut self) -> &FunctionData {
-        let func = self.get_func();
+        let func = self.get_cur_func();
         self.koopa_program.func(func)
     }
     pub fn get_func_data_mut(&mut self) -> &mut FunctionData{
-        let func = self.get_func();
+        let func = self.get_cur_func();
         self.koopa_program.func_mut(func)
     }
 
@@ -815,17 +827,19 @@ impl AstTrans {
         alloc_val
     }
 
-    pub fn extend_bb(&mut self, bb: BasicBlock) {
-        let func_data = self.get_func_data_mut();
-        func_data.layout_mut().bbs_mut().extend(vec![bb]);
-    }
+    // pub fn extend_bb(&mut self, bb: BasicBlock) {
+    //     let func_data = self.get_func_data_mut();
+    //     func_data.layout_mut().bbs_mut().extend(vec![bb]);
+    //     self.cur_ctx.push_bb(bb);
+    // }
+
     pub fn extend_inst(&mut self, inst: Value) {
-        let bb = self.get_bb();
+        let bb = self.get_cur_bb();
         let func_data = self.get_func_data_mut();
         func_data.layout_mut().bb_mut(bb).insts_mut().extend(vec![inst]);
     }
     pub fn extend_insts(&mut self, insts: Vec<Value>) {
-        let bb = self.get_bb();
+        let bb = self.get_cur_bb();
         let func_data = self.get_func_data_mut();
         func_data.layout_mut().bb_mut(bb).insts_mut().extend(insts);
     }
