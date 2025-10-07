@@ -7,9 +7,14 @@
 //   return 0;
 // }
 int main() {
-  const int x = 1 && 0;
-  return x;
+  // int i = 0;
+  // while (i < 10) i = i + 1;
+  while (1) {
+    return 1;
+  }
+  return 0;
 }
+
 // int main() {
 //   int i = 114;
 //   if (i >= 233)

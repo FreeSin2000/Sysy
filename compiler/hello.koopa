@@ -1,18 +1,13 @@
 fun @main(): i32 {
 %entry:
-  %0 = alloc i32
-  br 1, %land_then_0, %land_else_1
+  jump %while_entry_0
 
-%land_then_0:
-  %1 = ne 0, 0
-  store %1, %0
-  jump %land_end_2
+%while_entry_0:
+  br 1, %while_body_1, %while_end_2
 
-%land_else_1:
-  store 0, %0
-  jump %land_end_2
+%while_body_1:
+  ret 1
 
-%land_end_2:
-  %2 = load %0
-  ret %2
+%while_end_2:
+  ret 0
 }

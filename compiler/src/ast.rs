@@ -90,6 +90,7 @@ pub enum Stmt {
     Block(Block),
     RetExp(Exp),
     IfStmt(Exp, Box<Stmt>, Option<Box<Stmt>>),
+    WhileStmt(Exp, Box<Stmt>),
 }
 
 pub trait Visitable {
@@ -127,15 +128,15 @@ impl Visitable for Stmt {
                     let cond_val = exp.accept(ast_trans).unwrap();
 
                     let then_uid = ast_trans.next_uid();
-                    let then_block = ast_trans.new_basic_block(Some(format!("%then_{}", then_uid.to_string())));
+                    let then_block = ast_trans.new_basic_block(Some(format!("%if_then_{}", then_uid.to_string())));
 
                     match opt_else_stmt {
                         Some(else_stmt) => {
                             let else_uid = ast_trans.next_uid();
-                            let else_block = ast_trans.new_basic_block(Some(format!("%else_{}", else_uid.to_string())));
+                            let else_block = ast_trans.new_basic_block(Some(format!("%if_else_{}", else_uid.to_string())));
 
                             let end_uid = ast_trans.next_uid();
-                            let end_block = ast_trans.new_basic_block(Some(format!("%end_{}", end_uid.to_string())));
+                            let end_block = ast_trans.new_basic_block(Some(format!("%if_end_{}", end_uid.to_string())));
 
                             
                             let br_inst = ast_trans.new_branch(cond_val, then_block, else_block);
@@ -160,7 +161,7 @@ impl Visitable for Stmt {
                         },
                         None => {
                             let end_uid = ast_trans.next_uid();
-                            let end_block = ast_trans.new_basic_block(Some(format!("%end_{}", end_uid.to_string())));
+                            let end_block = ast_trans.new_basic_block(Some(format!("%if_end_{}", end_uid.to_string())));
                             let br_inst = ast_trans.new_branch(cond_val, then_block, end_block);
 
                             ast_trans.extend_bb(then_block);
@@ -174,6 +175,31 @@ impl Visitable for Stmt {
                             ast_trans.extend_bb(end_block);
                         },
                     };
+                    None
+                },
+                Self::WhileStmt(exp, stmt) => {
+                    let entry_uid = ast_trans.next_uid();
+                    let entry_bb = ast_trans.new_basic_block(Some(format!("%while_entry_{}", entry_uid.to_string())));
+                    let body_uid = ast_trans.next_uid();
+                    let body_bb = ast_trans.new_basic_block(Some(format!("%while_body_{}", body_uid.to_string())));
+                    let end_uid = ast_trans.next_uid();
+                    let end_bb = ast_trans.new_basic_block(Some(format!("%while_end_{}", end_uid.to_string())));
+
+                    ast_trans.new_jump(entry_bb);
+
+                    ast_trans.extend_bb(entry_bb);
+                    let cond_val = exp.accept(ast_trans).unwrap();
+                    ast_trans.new_branch(cond_val, body_bb, end_bb);
+
+                    ast_trans.extend_bb(body_bb);
+                    ast_trans.enter_scope();
+                    stmt.accept(ast_trans);
+                    if !ast_trans.is_cur_bb_terminate() {
+                        ast_trans.new_jump(entry_bb);
+                    }
+                    ast_trans.exit_scope();
+
+                    ast_trans.extend_bb(end_bb);
                     None
                 },
             }
