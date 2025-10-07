@@ -34,17 +34,15 @@ impl Visitable for FuncDef {
         let ret_ty = match &self.func_type {
             FuncType::Int => Type::get_i32(),
         };       
-        let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
-        ast_trans.enter_func(func);
         // ast_trans.enter_scope();
-        let func_data = ast_trans.get_func_data_mut();
+        // let func_data = ast_trans.get_func_data_mut();
+        // let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
+        let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
         let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
         ast_trans.extend_bb(entry_bb);
-        // let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
-        ast_trans.enter_bb(entry_bb);
+
         self.block.accept(ast_trans);
-        ast_trans.exit_bb();
-        ast_trans.exit_func();
+
         None
     }
 }
@@ -112,92 +110,79 @@ pub trait Visitable {
 }
 impl Visitable for Stmt {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
-        match self {
-            Self::LValExp(lval, exp) => {
-                // let (l_val, mut l_insts) = lval.to_value(func_data, ast_trans);
-                let l_val = lval.accept(ast_trans).unwrap();
-                // let (r_val, r_insts) = exp.to_value(func_data, ast_trans);
-                let r_val = exp.accept(ast_trans).unwrap();
-                // let (s_val, s_insts) = AstTrans::build_store_op(func_data, l_val, r_val);
-                let s_val = ast_trans.new_store(r_val, l_val);
-                // l_insts.extend(r_insts);
-                // l_insts.extend(s_insts);
-                // (l_val, l_insts)
-                Some(l_val)
-            },
-            Self::OptExp(opt_exp) => {
-                match opt_exp {
-                    Some(exp) => exp.accept(ast_trans),
-                    None => None,
-                }
-            },
-            Self::Block(block) => {
-                block.accept(ast_trans);
-                None
-            },
-            Self::RetExp(exp) => {
-                // let (res, mut insts) = exp.to_value(func_data, ast_trans);
-                let res = exp.accept(ast_trans).unwrap();
-                // let (ret, ret_insts) = AstTrans::build_ret_op(func_data, Some(res));
-                let ret = ast_trans.new_ret(Some(res));
-                // insts.extend(ret_insts);
-                Some(ret)
-            },
-            Self::IfStmt(exp, then_stmt, opt_else_stmt) => {
-                let cond_val = exp.accept(ast_trans).unwrap();
-                // let zero = ast_trans.new_integer(0);
-                // let cond_val = ast_trans.new_binary(BinaryOp::NotEq, cond_exp, zero);
+        if ast_trans.is_cur_bb_terminate() {
+            None
+        } else {
+            match self {
+                Self::LValExp(lval, exp) => {
+                    let l_val = lval.accept(ast_trans).unwrap();
+                    let r_val = exp.accept(ast_trans).unwrap();
+                    let s_val = ast_trans.new_store(r_val, l_val);
+                    Some(l_val)
+                },
+                Self::OptExp(opt_exp) => {
+                    match opt_exp {
+                        Some(exp) => exp.accept(ast_trans),
+                        None => None,
+                    }
+                },
+                Self::Block(block) => {
+                    block.accept(ast_trans);
+                    None
+                },
+                Self::RetExp(exp) => {
+                    let res = exp.accept(ast_trans).unwrap();
+                    let ret = ast_trans.new_ret(Some(res));
+                    Some(ret)
+                },
+                Self::IfStmt(exp, then_stmt, opt_else_stmt) => {
+                    let cond_val = exp.accept(ast_trans).unwrap();
 
+                    let then_uid = ast_trans.next_uid();
+                    let then_block = ast_trans.new_basic_block(Some(format!("%then_{}", then_uid.to_string())));
 
-                let then_uid = ast_trans.next_uid();
-                let then_block = ast_trans.new_basic_block(Some(format!("%then_{}", then_uid.to_string())));
+                    match opt_else_stmt {
+                        Some(else_stmt) => {
+                            let else_uid = ast_trans.next_uid();
+                            let else_block = ast_trans.new_basic_block(Some(format!("%else_{}", else_uid.to_string())));
 
-                ast_trans.extend_bb(then_block);
+                            let end_uid = ast_trans.next_uid();
+                            let end_block = ast_trans.new_basic_block(Some(format!("%end_{}", end_uid.to_string())));
 
-                match opt_else_stmt {
-                    Some(else_stmt) => {
-                        let else_uid = ast_trans.next_uid();
-                        let else_block = ast_trans.new_basic_block(Some(format!("%else_{}", else_uid.to_string())));
+                            
+                            let br_inst = ast_trans.new_branch(cond_val, then_block, else_block);
 
-                        let end_uid = ast_trans.next_uid();
-                        let end_block = ast_trans.new_basic_block(Some(format!("%end_{}", end_uid.to_string())));
+                            ast_trans.extend_bb(then_block);
+                            then_stmt.accept(ast_trans);
+                            if !ast_trans.is_cur_bb_terminate() {
+                                ast_trans.new_jump(end_block);
+                            }
+                            
+                            ast_trans.extend_bb(else_block);
+                            else_stmt.accept(ast_trans);
 
-                        ast_trans.extend_bb(else_block);
-                        ast_trans.extend_bb(end_block);
+                            if !ast_trans.is_cur_bb_terminate() {
+                                ast_trans.new_jump(end_block);
+                            }
+                            ast_trans.extend_bb(end_block);
+                        },
+                        None => {
+                            let end_uid = ast_trans.next_uid();
+                            let end_block = ast_trans.new_basic_block(Some(format!("%end_{}", end_uid.to_string())));
+                            let br_inst = ast_trans.new_branch(cond_val, then_block, end_block);
 
-                        let br_inst = ast_trans.new_branch(cond_val, then_block, else_block);
+                            ast_trans.extend_bb(then_block);
+                            then_stmt.accept(ast_trans);
 
-                        ast_trans.exit_bb();
-                        ast_trans.enter_bb(then_block);
-                        then_stmt.accept(ast_trans);
-                        ast_trans.new_jump(end_block);
-
-                        ast_trans.exit_bb();
-                        ast_trans.enter_bb(else_block);
-                        else_stmt.accept(ast_trans);
-                        ast_trans.new_jump(end_block);
-                        ast_trans.extend_bb(else_block);
-
-                        ast_trans.exit_bb();
-                        ast_trans.enter_bb(end_block);
-                    },
-                    None => {
-                        let end_uid = ast_trans.next_uid();
-                        let end_block = ast_trans.new_basic_block(Some(format!("%end_{}", end_uid.to_string())));
-                        let br_inst = ast_trans.new_branch(cond_val, then_block, end_block);
-                        ast_trans.extend_bb(end_block);
-
-                        ast_trans.exit_bb();
-                        ast_trans.enter_bb(then_block);
-                        then_stmt.accept(ast_trans);
-                        ast_trans.new_jump(end_block);
-
-                        ast_trans.exit_bb();
-                        ast_trans.enter_bb(end_block);
-                    },
-                };
-                None
-            },
+                            if !ast_trans.is_cur_bb_terminate() {
+                                ast_trans.new_jump(end_block);
+                            }
+                            ast_trans.extend_bb(end_block);
+                        },
+                    };
+                    None
+                },
+            }
         }
     }
 }
@@ -667,33 +652,39 @@ pub enum BindingItem {
     VarInt(Value),
 }
 pub struct AstContext {
-    pub funcs: Vec<Function>,
-    pub bbs: Vec<BasicBlock>,
+    pub func: Option<Function>,
+    pub bb: Option<BasicBlock>,
+    pub bb_terminate: bool,
 }
 impl AstContext {
     pub fn new() -> AstContext {
         AstContext {
-            funcs: Vec::new(),
-            bbs: Vec::new(),
+            func: None,
+            bb: None,
+            bb_terminate: false,
         }
     }
-    pub fn push_bb(&mut self, bb: BasicBlock) {
-        self.bbs.push(bb);
+    pub fn set_bb(&mut self, bb: BasicBlock) {
+        self.bb = Some(bb);
     }
-    pub fn push_func(&mut self, func: Function) {
-        self.funcs.push(func);
+    pub fn clear_bb_terminate(&mut self) {
+        self.bb_terminate = false;
     }
-    pub fn pop_bb(&mut self) {
-        self.bbs.pop();
+    pub fn set_bb_terminate(&mut self) {
+        self.bb_terminate = true;
     }
-    pub fn pop_func(&mut self) {
-        self.funcs.pop();
+    pub fn get_bb_terminate(&mut self) -> bool {
+        self.bb_terminate
+    }
+
+    pub fn set_func(&mut self, func: Function) {
+        self.func = Some(func);
     }
     pub fn get_bb(&mut self) -> BasicBlock {
-        *self.bbs.last().unwrap()
+        self.bb.unwrap()
     }
     pub fn get_func(&mut self) -> Function {
-        *self.funcs.last().unwrap()
+        self.func.unwrap()
     }
 }
 
@@ -758,20 +749,6 @@ impl AstTrans {
         }
     }
 
-    pub fn enter_func(&mut self, func: Function) {
-        self.cur_ctx.push_func(func);
-    }
-    pub fn enter_bb(&mut self, bb: BasicBlock) {
-        self.cur_ctx.push_bb(bb);
-    }
-
-    pub fn exit_func(&mut self) {
-        self.cur_ctx.pop_func();
-    }
-    pub fn exit_bb(&mut self) {
-        self.cur_ctx.pop_bb();
-    }
-
     pub fn get_cur_func(&mut self) -> Function {
         self.cur_ctx.get_func()
     }
@@ -780,9 +757,15 @@ impl AstTrans {
         self.cur_ctx.get_bb()
     }
 
+    pub fn is_cur_bb_terminate(&mut self) -> bool {
+        self.cur_ctx.get_bb_terminate()
+    }
+
     pub fn extend_bb(&mut self, bb: BasicBlock) {
         let func_data = self.get_func_data_mut();
         func_data.layout_mut().bbs_mut().extend(vec![bb]);
+        self.cur_ctx.set_bb(bb);
+        self.cur_ctx.clear_bb_terminate();
     }
 
     pub fn set_value_name(&mut self, val: Value, name: Option<String>) {
@@ -812,7 +795,9 @@ impl AstTrans {
         Self::const_num(val_data)
     }
     pub fn new_func(&mut self, func_name: String, func_params_ty: Vec<(Option<String>, Type)>, func_ret_ty: Type) -> Function {
-        self.koopa_program.new_func(FunctionData::with_param_names(func_name, func_params_ty, func_ret_ty))
+        let func = self.koopa_program.new_func(FunctionData::with_param_names(func_name, func_params_ty, func_ret_ty));
+        self.cur_ctx.set_func(func);
+        func
     }
     pub fn new_basic_block(&mut self, bb_name: Option<String>) -> BasicBlock {
         let func_data = self.get_func_data_mut();
@@ -827,18 +812,21 @@ impl AstTrans {
         let func_data = self.get_func_data_mut();
         let ret_val = func_data.dfg_mut().new_value().ret(res);
         self.extend_inst(ret_val);
+        self.cur_ctx.set_bb_terminate();
         ret_val
     }
     pub fn new_jump(&mut self, dest_block: BasicBlock) -> Value {
         let func_data = self.get_func_data_mut();
         let jump_val = func_data.dfg_mut().new_value().jump(dest_block);
         self.extend_inst(jump_val);
+        self.cur_ctx.set_bb_terminate();
         jump_val
     }
     pub fn new_branch(&mut self, cond_val: Value, then_block: BasicBlock, else_block: BasicBlock) -> Value {
         let func_data = self.get_func_data_mut();
         let branch_val = func_data.dfg_mut().new_value().branch(cond_val, then_block, else_block);
         self.extend_inst(branch_val);
+        self.cur_ctx.set_bb_terminate();
         branch_val
     }
     pub fn new_binary(&mut self, bin_op: BinaryOp, lhs: Value, rhs: Value) -> Value {
