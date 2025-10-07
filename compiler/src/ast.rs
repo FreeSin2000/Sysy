@@ -136,6 +136,8 @@ impl Visitable for Stmt {
                     Some(ret)
                 },
                 Self::IfStmt(exp, then_stmt, opt_else_stmt) => {
+                    ast_trans.enter_scope();
+
                     let cond_val = exp.accept(ast_trans).unwrap();
 
                     let then_uid = ast_trans.next_uid();
@@ -180,6 +182,7 @@ impl Visitable for Stmt {
                             ast_trans.extend_bb(end_block);
                         },
                     };
+                    ast_trans.exit_scope();
                     None
                 },
             }

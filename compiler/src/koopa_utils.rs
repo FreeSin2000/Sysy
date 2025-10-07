@@ -24,6 +24,9 @@ impl RegisterAllocator {
     pub fn get_temp_reg(&mut self) -> String {
         String::from("t2")
     }
+    pub fn get_cond_reg(&mut self) -> String {
+        String::from("t3")
+    }
 }
 
 pub struct FunctionAnalysis {
@@ -125,7 +128,7 @@ impl KoopaTrans {
         }
 
         //epilogue
-        asm_str.push_str(&format!("    addi  sp, sp, {}\n    ret\n", stack_frame_size));
+        asm_str.push_str(&format!("exit:    addi  sp, sp, {}\n    ret\n", stack_frame_size));
         asm_str
     }
 
@@ -143,7 +146,7 @@ impl KoopaTrans {
             ValueKind::Load(load_val) => self.handle_load(func_data, load_val, inst),
             ValueKind::Alloc(_) => String::from(""),
             ValueKind::Jump(_) => String::from(""),
-            ValueKind::Branch(_) => String::from(""),
+            ValueKind::Branch(br) => self.handle_branch(func_data, br),
             _ => panic!("invalid inst"),
         }
     }
@@ -164,9 +167,36 @@ impl KoopaTrans {
     pub fn handle_ret(&mut self, func_data: &FunctionData, ret: &Return) -> String {
         let ret_val = ret.value().unwrap();
         let rd = self.reg_allocator.get_ret_reg();
-        self.load_operand(func_data, ret_val, &rd)
+        let mut ret_asm = String::from("");
+        ret_asm.push_str(&self.load_operand(func_data, ret_val, &rd));
+        ret_asm.push_str(&format!("    j     exit\n"));
+        ret_asm
     }
+    pub fn get_bb_name(func_data: &FunctionData, bb: BasicBlock) -> String {
+        func_data.dfg().bb(bb).name().clone().unwrap()
+    }
+    pub fn handle_branch(&mut self, func_data: &FunctionData, br: &Branch) -> String {
+        let cond_reg = self.reg_allocator.get_cond_reg();
+        let cond_val = br.cond();
+        let then_bb = br.true_bb();
+        let else_bb = br.false_bb();
 
+        let then_name = Self::get_bb_name(func_data, then_bb);
+        let else_name = Self::get_bb_name(func_data, else_bb);
+        // let else_lable = func_data.dfg().bb(else_bb).name().clone().unwrap();
+        let mut br_asm = String::from("");
+        br_asm.push_str(&self.load_operand(func_data, cond_val, &cond_reg));
+        br_asm.push_str(&format!("    bnez  {}, {}\n", cond_reg, &then_name[1..]));
+        br_asm.push_str(&format!("    j     {}\n", &else_name[1..]));
+        br_asm
+    }
+    pub fn handle_jump(&mut self, func_data: &FunctionData, jmp: &Jump) -> String {
+        let tar_bb = jmp.target();
+        // let tar_lable = func_data.dfg().bb(tar_bb).name().clone().unwrap();
+        let tar_name = Self::get_bb_name(func_data, tar_bb);
+        format!("    j     {}\n", &tar_name[1..])
+
+    }
     pub fn handle_binary(&mut self, func_data: &FunctionData, binary: &Binary, des_val: Value) -> String {
         let (rs1, rs2) = self.reg_allocator.get_binary_temps();
         let rd = self.reg_allocator.get_temp_reg();
