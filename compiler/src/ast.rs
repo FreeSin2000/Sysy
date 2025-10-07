@@ -34,9 +34,7 @@ impl Visitable for FuncDef {
         let ret_ty = match &self.func_type {
             FuncType::Int => Type::get_i32(),
         };       
-        // ast_trans.enter_scope();
-        // let func_data = ast_trans.get_func_data_mut();
-        // let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
+
         let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
         let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
         ast_trans.extend_bb(entry_bb);
@@ -59,14 +57,6 @@ pub struct Block {
 
 impl Visitable for Block {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
-
-        // let entry_bb = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
-
-        // let cur_uid = ast_trans.next_uid();
-        // let entry_bb = ast_trans.new_basic_block(Some("%entry_".to_string() + &cur_uid.to_string()));
-
-        // let entry_bb = ast_trans.new_basic_block(Some("%entry".to_string()));
-
         ast_trans.enter_scope();
         for block_item in &self.block_items {
             match block_item {
@@ -77,15 +67,12 @@ impl Visitable for Block {
                         },
                         Decl::VarDecl(var_decl) => {
                             var_decl.build_bindngs(ast_trans);
-                            // func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
                         }
                         _ => unimplemented!("Not implement other decl."),
                     }
                 },
                 BlockItem::Stmt(stmt) => {
-                    // let (_, insts) = stmt.to_value(func_data, ast_trans);
                     stmt.accept(ast_trans);
-                    // func_data.layout_mut().bb_mut(entry_bb).insts_mut().extend(insts);
                 },
             };
         }
@@ -203,7 +190,6 @@ impl Visitable for Number {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
             Number::INT_CONST(num) => {
-                // let val = func_data.dfg_mut().new_value().integer(*num);
                 let val = ast_trans.new_integer(*num);
                 Some(val)
             },
@@ -233,24 +219,15 @@ impl Visitable for UnaryExp {
                 match unary_op {
                     UnaryOp::Plus => unary_exp.accept(ast_trans),
                     UnaryOp::Minus => {
-                        // let lhs = func_data.dfg_mut().new_value().integer(0);
                         let lhs = ast_trans.new_integer(0);
-                        // let (rhs, mut insts) = unary_exp.to_value(func_data, ast_trans);
                         let rhs = unary_exp.accept(ast_trans).unwrap();
-                        // let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Sub);
                         let val = ast_trans.new_binary(BinaryOp::Sub, lhs, rhs);
-                        // insts.extend(val_insts);
                         Some(val)
                     },
                     UnaryOp::Not => {
-                        // let rhs  = func_data.dfg_mut().new_value().integer(0);
                         let rhs = ast_trans.new_integer(0);
-                        // let (lhs, mut insts) = unary_exp.to_value(func_data, ast_trans);
                         let lhs = unary_exp.accept(ast_trans).unwrap();
-                        // let (val, val_insts) = AstTrans::build_binary_op(func_data, lhs, rhs, BinaryOp::Eq); 
                         let val = ast_trans.new_binary(BinaryOp::Eq, lhs, rhs);
-                        // insts.extend(val_insts);
-                        // (val, insts)
                         Some(val)
                     },
                 }
@@ -272,19 +249,15 @@ impl Visitable for PrimaryExp {
         match self {
             PrimaryExp::ParenthesizedExp(exp) => exp.accept(ast_trans),
             PrimaryExp::LVal(lval) => {
-                // let (val, mut val_insts) = lval.to_value(func_data, ast_trans);
                 let val = lval.accept(ast_trans).unwrap(); 
-                // let val_data = func_data.dfg().value(val);
                 match ast_trans.get_value_kind(val) {
                     ValueKind::Integer(int) => Some(val),
                     ValueKind::Binary(binary) => Some(val),
                     ValueKind::Alloc(alloc) => {
-                        // let (load_val, load_insts) = AstTrans::build_load_op(func_data, val);
                         let load_val = ast_trans.new_load(val);
-                        // val_insts.extend(load_insts);
-                        // (load_val, val_insts)
                         Some(load_val)
-                    }
+                    },
+                    ValueKind::Load(load) => Some(val),
                     _ => unimplemented!("Unimplement LVal kind."),
                 }
             },
@@ -322,18 +295,13 @@ impl Visitable for MulExp {
         match self {
             MulExp::UnaryExp(unary_exp) => unary_exp.accept(ast_trans),
             MulExp::MulOpExp(mul_exp, mul_op, unary_exp) => {
-                // let (lhs, mut l_insts) = mul_exp.to_value(func_data, ast_trans);
                 let lhs = mul_exp.accept(ast_trans).unwrap();
-                // let (rhs, r_insts) = unary_exp.to_value(func_data, ast_trans);
                 let rhs = unary_exp.accept(ast_trans).unwrap();
                 let val = match mul_op {
                     MulOp::Mul => ast_trans.new_binary(BinaryOp::Mul, lhs, rhs),
                     MulOp::Div => ast_trans.new_binary(BinaryOp::Div, lhs, rhs),
                     MulOp::Mod => ast_trans.new_binary(BinaryOp::Mod, lhs, rhs),
                 };
-                // l_insts.extend(r_insts);
-                // l_insts.extend(val_insts);
-                // (val, l_insts)
                 Some(val)
             }
         }
@@ -361,9 +329,6 @@ impl Visitable for AddExp {
                     AddOp::Add => ast_trans.new_binary(BinaryOp::Add, lhs, rhs),
                     AddOp::Sub => ast_trans.new_binary(BinaryOp::Sub, lhs, rhs),
                 };
-                // l_insts.extend(r_insts);
-                // l_insts.extend(val_insts);
-                // (val, l_insts)
                 Some(val)
             }
         }
@@ -390,9 +355,6 @@ impl Visitable for RelExp {
                     RelOp::Ge => ast_trans.new_binary(BinaryOp::Ge, lhs, rhs),
                     RelOp::Le => ast_trans.new_binary(BinaryOp::Le, lhs, rhs),
                 };
-                // l_insts.extend(r_insts);
-                // l_insts.extend(val_insts);
-                // (val, l_insts)
                 Some(val)
             }
         }
@@ -426,9 +388,6 @@ impl Visitable for EqExp {
                     EqOp::Eq => ast_trans.new_binary(BinaryOp::Eq, lhs, rhs),
                     EqOp::NotEq => ast_trans.new_binary(BinaryOp::NotEq, lhs, rhs),
                 };
-                // l_insts.extend(r_insts);
-                // l_insts.extend(val_insts);
-                // (val, l_insts)
                 Some(val)
             }
         }
@@ -453,19 +412,38 @@ impl Visitable for LAndExp {
         match self {
             LAndExp::EqExp(eq_exp) => eq_exp.accept(ast_trans),
             LAndExp::LAndOpExp(land_exp, eq_exp) => {
+                
+                let then_uid = ast_trans.next_uid();
+                let then_bb = ast_trans.new_basic_block(Some(format!("%land_then_{}", then_uid.to_string())));
+
+                let else_uid = ast_trans.next_uid();
+                let else_bb = ast_trans.new_basic_block(Some(format!("%land_else_{}", else_uid.to_string())));
+
+                let end_uid = ast_trans.next_uid();
+                let end_bb = ast_trans.new_basic_block(Some(format!("%land_end_{}", end_uid.to_string())));
+
+                let land_val = ast_trans.new_alloc(Type::get(TypeKind::Int32));
+
                 let lhs = land_exp.accept(ast_trans).unwrap();
+
+                ast_trans.new_branch(lhs, then_bb, else_bb);
+
+                ast_trans.extend_bb(then_bb);
+
                 let rhs = eq_exp.accept(ast_trans).unwrap();
                 let zero = ast_trans.new_integer(0);
-                let logic_lhs = ast_trans.new_binary(BinaryOp::NotEq, lhs, zero);
                 let logic_rhs = ast_trans.new_binary(BinaryOp::NotEq, rhs, zero);
-                let val = ast_trans.new_binary(BinaryOp::And, logic_lhs, logic_rhs);
-                // l_insts.extend(r_insts);
-                // l_insts.extend(ll_insts);
-                // l_insts.extend(lr_insts);
-                // l_insts.extend(val_insts);
-                // (val, l_insts)
-                // ast_trans.extend_insts(vec![logic_lhs, logic_rhs, val]);
-                Some(val)
+
+                ast_trans.new_store(logic_rhs, land_val);
+                ast_trans.new_jump(end_bb); 
+
+                ast_trans.extend_bb(else_bb);
+                ast_trans.new_store(zero, land_val);
+                ast_trans.new_jump(end_bb);
+
+                ast_trans.extend_bb(end_bb);
+                let result_val = ast_trans.new_load(land_val);
+                Some(result_val)
             }
         }
     }
@@ -480,17 +458,36 @@ impl Visitable for LOrExp {
         match self {
             LOrExp::LAndExp(land_exp) => land_exp.accept(ast_trans),
             LOrExp::LOrOpExp(lor_exp, land_exp) => {
+                let then_uid = ast_trans.next_uid();
+                let then_bb = ast_trans.new_basic_block(Some(format!("%lor_then_{}", then_uid.to_string())));
+
+                let else_uid = ast_trans.next_uid();
+                let else_bb = ast_trans.new_basic_block(Some(format!("%lor_else_{}", else_uid.to_string())));
+
+                let end_uid = ast_trans.next_uid();
+                let end_bb = ast_trans.new_basic_block(Some(format!("%lor_end_{}", end_uid.to_string())));
+
+                let lor_val = ast_trans.new_alloc(Type::get(TypeKind::Int32));
+
                 let lhs = lor_exp.accept(ast_trans).unwrap();
-                let rhs = land_exp.accept(ast_trans).unwrap();
-                let val = ast_trans.new_binary(BinaryOp::Or, lhs, rhs);
-                // let zero = func_data.dfg_mut().new_value().integer(0);
                 let zero = ast_trans.new_integer(0);
-                let logic_val = ast_trans.new_binary(BinaryOp::NotEq, zero, val);
-                // l_insts.extend(r_insts);
-                // l_insts.extend(val_insts);
-                // l_insts.extend(lv_insts);
-                // (l_val, l_insts)
-                Some(logic_val)
+                let logic_lhs = ast_trans.new_binary(BinaryOp::NotEq, lhs, zero);
+
+                ast_trans.new_branch(lhs, then_bb, else_bb);
+                ast_trans.extend_bb(then_bb);
+                ast_trans.new_store(logic_lhs, lor_val);
+                ast_trans.new_jump(end_bb);
+
+                ast_trans.extend_bb(else_bb);
+                let rhs = land_exp.accept(ast_trans).unwrap();
+                let logic_rhs = ast_trans.new_binary(BinaryOp::NotEq, rhs, zero);
+
+                ast_trans.new_store(logic_rhs, lor_val);
+                ast_trans.new_jump(end_bb); 
+
+                ast_trans.extend_bb(end_bb);
+                let result_val = ast_trans.new_load(lor_val);
+                Some(result_val)
             }
         }
     }
@@ -516,10 +513,8 @@ impl ConstDecl {
             let (ident, val) = const_def.to_binding(ast_trans);
             match self.btype {
                 BType::Int => {
-                    // let val_data = ast_trans.get_value_data(val);
-                    // let num = AstTrans::const_num(val_data);
-                    let num = ast_trans.get_const(val);
-                    ast_trans.bind(ident.clone(), BindingItem::ConstInt(val, num));
+                    // TODO: 
+                    ast_trans.bind(ident.clone(), BindingItem::ConstInt(val));
                 },
                 _ => unimplemented!("Not implement other type bindings."),
             }
@@ -543,7 +538,7 @@ pub struct ConstDef {
 impl ConstDef {
     fn to_binding(&self, ast_trans: &mut AstTrans) -> (String, Value) {
         let val = self.const_init_val.const_exp.exp.accept(ast_trans).unwrap();
-        assert!(ast_trans.get_value_kind(val).is_const());
+        // assert!(ast_trans.get_value_kind(val).is_const());
         (self.ident.clone(), val)
     }
 }
@@ -574,7 +569,7 @@ impl Visitable for LVal {
             LVal::IDENT(ident) => { 
                 if let Some(binding) = ast_trans.lookup(ident) {
                     match binding {
-                        BindingItem::ConstInt(val, num) => {
+                        BindingItem::ConstInt(val) => {
                             Some(*val)
                         },
                         BindingItem::VarInt(val) => {
@@ -626,16 +621,13 @@ impl VarDecl {
         for var_def in &self.var_defs {
             match var_def {
                 VarDef::IDENT(ident) => {
-                    // let (l_val, l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
                     let l_val = ast_trans.new_alloc(Type::get(TypeKind::Int32));
                     let cur_uid = ast_trans.next_uid();
                     ast_trans.set_value_name(l_val, Some(String::from("@") + ident + &format!("_{}", cur_uid.to_string())));
                     let binding = BindingItem::VarInt(l_val);
                     ast_trans.bind(ident.to_string(), binding);
-                    // decl_insts.extend(l_insts);
                 },
                 VarDef::IDENTInitVal(ident, init_val) => {
-                    // let (l_val, mut l_insts) = AstTrans::build_alloc_op(func_data, Some(String::from("@") + ident), TypeKind::Int32);
                     let l_val = ast_trans.new_alloc(Type::get(TypeKind::Int32));
                     let cur_uid = ast_trans.next_uid();
                     ast_trans.set_value_name(l_val, Some(String::from("@") + ident + &format!("_{}", cur_uid.to_string())));
@@ -643,11 +635,7 @@ impl VarDecl {
                     ast_trans.bind(ident.to_string(), binding);
 
                     let r_val = init_val.accept(ast_trans).unwrap();
-                    // let (s_val, s_insts) = AstTrans::build_store_op(func_data, l_val, r_val);
                     let s_val = ast_trans.new_store(r_val, l_val);
-                    // l_insts.extend(r_insts);
-                    // l_insts.extend(s_insts);
-
                 }
             }
         }
@@ -655,7 +643,7 @@ impl VarDecl {
 }
 
 pub enum BindingItem {
-    ConstInt(Value, i32),
+    ConstInt(Value),
     VarInt(Value),
 }
 pub struct AstContext {
@@ -727,7 +715,6 @@ impl ScopeStack {
     }
     pub fn get_binding(&mut self, name: &String) -> Option<&BindingItem> {
         let cur_scope = self.cur_scope();
-        // cur_scope.get(name)
         self.stack
             .iter()
             .rev()
@@ -837,32 +824,36 @@ impl AstTrans {
         branch_val
     }
     pub fn new_binary(&mut self, bin_op: BinaryOp, lhs: Value, rhs: Value) -> Value {
-        if self.get_value_kind(lhs).is_const() && self.get_value_kind(rhs).is_const() {
-            let lhs_num = self.get_const(lhs);
-            let rhs_num = self.get_const(rhs);
-            let val_num = match bin_op {
-                BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
-                BinaryOp::Eq => (lhs_num == rhs_num) as i32,
-                BinaryOp::Gt => (lhs_num > rhs_num) as i32,
-                BinaryOp::Lt => (lhs_num < rhs_num) as i32,
-                BinaryOp::Ge => (lhs_num >= rhs_num) as i32,
-                BinaryOp::Le => (lhs_num <= rhs_num) as i32,
-                BinaryOp::Add => lhs_num + rhs_num,
-                BinaryOp::Sub => lhs_num - rhs_num,
-                BinaryOp::Mul => lhs_num * rhs_num,
-                BinaryOp::Div => lhs_num / rhs_num,
-                BinaryOp::Mod => lhs_num % rhs_num,
-                BinaryOp::Or => (lhs_num !=0 || rhs_num != 0) as i32,
-                BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
-                _ => unimplemented!("Binary op not implement!"), 
-            };
-            self.new_integer(val_num)
-        } else {
-            let func_data = self.get_func_data_mut();
-            let bin_val = func_data.dfg_mut().new_value().binary(bin_op, lhs, rhs);
-            self.extend_inst(bin_val);
-            bin_val
-        }
+        let func_data = self.get_func_data_mut();
+        let bin_val = func_data.dfg_mut().new_value().binary(bin_op, lhs, rhs);
+        self.extend_inst(bin_val);
+        bin_val
+        // if self.get_value_kind(lhs).is_const() && self.get_value_kind(rhs).is_const() {
+        //     let lhs_num = self.get_const(lhs);
+        //     let rhs_num = self.get_const(rhs);
+        //     let val_num = match bin_op {
+        //         BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
+        //         BinaryOp::Eq => (lhs_num == rhs_num) as i32,
+        //         BinaryOp::Gt => (lhs_num > rhs_num) as i32,
+        //         BinaryOp::Lt => (lhs_num < rhs_num) as i32,
+        //         BinaryOp::Ge => (lhs_num >= rhs_num) as i32,
+        //         BinaryOp::Le => (lhs_num <= rhs_num) as i32,
+        //         BinaryOp::Add => lhs_num + rhs_num,
+        //         BinaryOp::Sub => lhs_num - rhs_num,
+        //         BinaryOp::Mul => lhs_num * rhs_num,
+        //         BinaryOp::Div => lhs_num / rhs_num,
+        //         BinaryOp::Mod => lhs_num % rhs_num,
+        //         BinaryOp::Or => (lhs_num !=0 || rhs_num != 0) as i32,
+        //         BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
+        //         _ => unimplemented!("Binary op not implement!"), 
+        //     };
+        //     self.new_integer(val_num)
+        // } else {
+        //     let func_data = self.get_func_data_mut();
+        //     let bin_val = func_data.dfg_mut().new_value().binary(bin_op, lhs, rhs);
+        //     self.extend_inst(bin_val);
+        //     bin_val
+        // }
     }
 
     pub fn new_load(&mut self, val: Value) -> Value {
@@ -885,12 +876,6 @@ impl AstTrans {
         self.extend_inst(alloc_val);
         alloc_val
     }
-
-    // pub fn extend_bb(&mut self, bb: BasicBlock) {
-    //     let func_data = self.get_func_data_mut();
-    //     func_data.layout_mut().bbs_mut().extend(vec![bb]);
-    //     self.cur_ctx.push_bb(bb);
-    // }
 
     pub fn extend_inst(&mut self, inst: Value) {
         let bb = self.get_cur_bb();
@@ -921,58 +906,6 @@ impl AstTrans {
     pub fn next_uid(&mut self) -> i32 {
         self.scope_manager.new_uid()
     }
-    // pub fn build_binary_op(func_data: &mut FunctionData, lhs: Value, rhs: Value, op: BinaryOp) -> (Value, Vec<Value>) {
-    //     let lhs_data = func_data.dfg().value(lhs);
-    //     let rhs_data = func_data.dfg().value(rhs);
-    //     if lhs_data.kind().is_const() && rhs_data.kind().is_const() {
-    //         let lhs_num = match lhs_data.kind() {
-    //             ValueKind::Integer(num) => num.value(),
-    //             _ => panic!("Not a number."), 
-    //         };
-    //         let rhs_num = match rhs_data.kind() {
-    //             ValueKind::Integer(num) => num.value(),
-    //             _ => panic!("Not a number!"), 
-    //         };
-    //         let val_num = match op {
-    //             BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
-    //             BinaryOp::Eq => (lhs_num == rhs_num) as i32,
-    //             BinaryOp::Gt => (lhs_num > rhs_num) as i32,
-    //             BinaryOp::Lt => (lhs_num < rhs_num) as i32,
-    //             BinaryOp::Ge => (lhs_num >= rhs_num) as i32,
-    //             BinaryOp::Le => (lhs_num <= rhs_num) as i32,
-    //             BinaryOp::Add => lhs_num + rhs_num,
-    //             BinaryOp::Sub => lhs_num - rhs_num,
-    //             BinaryOp::Mul => lhs_num * rhs_num,
-    //             BinaryOp::Div => lhs_num / rhs_num,
-    //             BinaryOp::Mod => lhs_num % rhs_num,
-    //             BinaryOp::Or => (lhs_num !=0 || rhs_num != 0) as i32,
-    //             BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
-    //             _ => unimplemented!("Binary op not implement!"), 
-    //         };
-    //         let val = func_data.dfg_mut().new_value().integer(val_num);
-    //         (val, vec![])
-    //     } else {
-    //         let val = func_data.dfg_mut().new_value().binary(op, lhs, rhs);
-    //         (val, vec![val])
-    //     }
-    // }
-    // pub fn build_alloc_op(func_data: &mut FunctionData, ident: Option<String>, tk: TypeKind) -> (Value, Vec<Value>) {
-    //     let a_val = func_data.dfg_mut().new_value().alloc(Type::get(tk));
-    //     func_data.dfg_mut().set_value_name(a_val, ident);
-    //     (a_val, vec![a_val])
-    // }
-    // pub fn build_store_op(func_data: &mut FunctionData, l_val: Value, r_val: Value) -> (Value, Vec<Value>) {
-    //     let s_val = func_data.dfg_mut().new_value().store(r_val, l_val);
-    //     (s_val, vec![s_val])
-    // }
-    // pub fn build_load_op(func_data: &mut FunctionData, val: Value) -> (Value, Vec<Value>) {
-    //     let l_val = func_data.dfg_mut().new_value().load(val);
-    //     (l_val, vec![l_val])
-    // }
-    // pub fn build_ret_op(func_data: &mut FunctionData, res: Option<Value>) -> (Value, Vec<Value>) {
-    //     let ret_val = func_data.dfg_mut().new_value().ret(res);
-    //     (ret_val, vec![ret_val])
-    // }
     pub fn const_num(val_data: &ValueData) -> i32 {
         match val_data.kind() {
             ValueKind::Integer(int) => int.value(),
