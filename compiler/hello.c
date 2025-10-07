@@ -1,10 +1,10 @@
 
 // int main() {
-//   // const int x = 233, z = 777, y = 666;
-//   // const int u = x;
-//   // return x + z;
-//   int i, j = 114, k;
-//   return 0;
+//   const int x = 233, z = 777, y = 666;
+//   const int u = x + z;
+//   return u;
+//   // int i, j = 114, k;
+//   // return 0;
 // }
 int main() {
   // int i = 0;

@@ -96,6 +96,10 @@ pub enum Stmt {
 pub trait Visitable {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value>;
 }
+pub trait ConstValue {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value;
+}
+
 impl Visitable for Stmt {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         if ast_trans.is_cur_bb_terminate() {
@@ -212,6 +216,15 @@ pub enum Number {
     INT_CONST(i32),
 }
 
+impl ConstValue for Number {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            Number::INT_CONST(num) => {
+                ast_trans.new_integer(*num)
+            },
+        }
+    }
+}
 impl Visitable for Number {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
@@ -235,6 +248,29 @@ pub enum UnaryOp {
 pub enum UnaryExp {
     PrimaryExp(PrimaryExp),
     UnaryOpExp(UnaryOp, Box<UnaryExp>),
+}
+
+impl ConstValue for UnaryExp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            UnaryExp::PrimaryExp(primary_exp) => primary_exp.const_eval(ast_trans),
+            UnaryExp::UnaryOpExp(unary_op, unary_exp) => {
+                match unary_op {
+                    UnaryOp::Plus => unary_exp.const_eval(ast_trans),
+                    UnaryOp::Minus => {
+                        let lhs = ast_trans.new_integer(0);
+                        let rhs = unary_exp.const_eval(ast_trans);
+                        ast_trans.const_binary(BinaryOp::Sub, lhs, rhs)
+                    },
+                    UnaryOp::Not => {
+                        let rhs = ast_trans.new_integer(0);
+                        let lhs = unary_exp.const_eval(ast_trans);
+                        ast_trans.new_binary(BinaryOp::Eq, lhs, rhs)
+                    },
+                }
+            }
+        }
+    }
 }
 
 impl Visitable for UnaryExp {
@@ -270,6 +306,18 @@ pub enum PrimaryExp {
     Number(Number),
 }
 
+impl ConstValue for PrimaryExp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            PrimaryExp::ParenthesizedExp(exp) => exp.const_eval(ast_trans),
+            PrimaryExp::LVal(lval) => {
+                lval.const_eval(ast_trans)
+            },
+            PrimaryExp::Number(num) => num.const_eval(ast_trans),
+        }
+    }
+}
+
 impl Visitable for PrimaryExp {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
@@ -303,6 +351,12 @@ impl Visitable for Exp {
     }
 }
 
+impl ConstValue for Exp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        self.lor_exp.const_eval(ast_trans)
+    }
+}
+
 #[derive(Debug)]
 pub enum MulOp {
     Mul,
@@ -314,6 +368,23 @@ pub enum MulOp {
 pub enum MulExp {
     UnaryExp(UnaryExp),
     MulOpExp(Box<MulExp>, MulOp, UnaryExp),
+}
+
+impl ConstValue for MulExp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            MulExp::UnaryExp(unary_exp) => unary_exp.const_eval(ast_trans),
+            MulExp::MulOpExp(mul_exp, mul_op, unary_exp) => {
+                let lhs = mul_exp.const_eval(ast_trans);
+                let rhs = unary_exp.const_eval(ast_trans);
+                match mul_op {
+                    MulOp::Mul => ast_trans.const_binary(BinaryOp::Mul, lhs, rhs),
+                    MulOp::Div => ast_trans.const_binary(BinaryOp::Div, lhs, rhs),
+                    MulOp::Mod => ast_trans.const_binary(BinaryOp::Mod, lhs, rhs),
+                }
+            }
+        }
+    }
 }
 
 impl Visitable for MulExp {
@@ -344,6 +415,23 @@ pub enum AddExp {
     MulExp(MulExp),
     AddOpExp(Box<AddExp>, AddOp, MulExp),
 }
+
+impl ConstValue for AddExp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            AddExp::MulExp(mul_exp) => mul_exp.const_eval(ast_trans),
+            AddExp::AddOpExp(add_exp, add_op, mul_exp) => {
+                let lhs = add_exp.const_eval(ast_trans);
+                let rhs = mul_exp.const_eval(ast_trans);
+                match add_op {
+                    AddOp::Add => ast_trans.const_binary(BinaryOp::Add, lhs, rhs),
+                    AddOp::Sub => ast_trans.const_binary(BinaryOp::Sub, lhs, rhs),
+                }
+            }
+        }
+    }
+}
+
 impl Visitable for AddExp {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
@@ -368,6 +456,27 @@ pub enum RelExp {
     RelOpExp(Box<RelExp>, RelOp, AddExp),
 }
 
+impl ConstValue for RelExp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            RelExp::AddExp(add_exp) => add_exp.const_eval(ast_trans),
+            RelExp::RelOpExp(rel_exp, rel_op, add_exp) => {
+                let lhs = rel_exp.const_eval(ast_trans);
+                let rhs = add_exp.const_eval(ast_trans);
+                let lhs_num = ast_trans.get_const(lhs);
+                let rhs_num = ast_trans.get_const(rhs);
+
+                let val_num = match rel_op {
+                    RelOp::Gt => (lhs_num > rhs_num) as i32,
+                    RelOp::Lt => (lhs_num < rhs_num) as i32,
+                    RelOp::Ge => (lhs_num >= rhs_num) as i32,
+                    RelOp::Le => (lhs_num <= rhs_num) as i32,
+                };
+                ast_trans.new_integer(val_num)
+            }
+        }
+    }
+}
 impl Visitable for RelExp {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
@@ -403,6 +512,24 @@ pub enum EqExp {
     EqOpExp(Box<EqExp>, EqOp, RelExp),
 }
 
+impl ConstValue for EqExp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            EqExp::RelExp(rel_exp) => rel_exp.const_eval(ast_trans),
+            EqExp::EqOpExp(eq_exp, eq_op, rel_exp) => {
+                let lhs = eq_exp.const_eval(ast_trans);
+                let rhs = rel_exp.const_eval(ast_trans);
+                let lhs_num = ast_trans.get_const(lhs);
+                let rhs_num = ast_trans.get_const(rhs);
+                let val_num = match eq_op {
+                    EqOp::Eq => (lhs_num == rhs_num) as i32,
+                    EqOp::NotEq => (lhs_num != rhs_num) as i32,
+                };
+                ast_trans.new_integer(val_num)
+            }
+        }
+    }
+}
 impl Visitable for EqExp {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
@@ -433,6 +560,20 @@ pub enum LAndExp {
     LAndOpExp(Box<LAndExp>, EqExp),
 }
 
+impl ConstValue for LAndExp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            LAndExp::EqExp(eq_exp) => eq_exp.const_eval(ast_trans),
+            LAndExp::LAndOpExp(land_exp, eq_exp) => {
+                let lhs = land_exp.const_eval(ast_trans);
+                let rhs = eq_exp.const_eval(ast_trans);
+                let lhs_num = ast_trans.get_const(lhs);
+                let rhs_num = ast_trans.get_const(rhs);
+                ast_trans.new_integer((lhs_num != 0 && rhs_num != 0) as i32)
+            },
+        }
+    }
+}
 impl Visitable for LAndExp {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
@@ -478,6 +619,21 @@ impl Visitable for LAndExp {
 pub enum LOrExp {
     LAndExp(LAndExp),
     LOrOpExp(Box<LOrExp>, LAndExp),
+}
+
+impl ConstValue for LOrExp {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            LOrExp::LAndExp(land_exp) => land_exp.const_eval(ast_trans),
+            LOrExp::LOrOpExp(lor_exp, land_exp) => {
+                let lhs = lor_exp.const_eval(ast_trans);
+                let rhs = land_exp.const_eval(ast_trans);
+                let lhs_num = ast_trans.get_const(lhs);
+                let rhs_num = ast_trans.get_const(rhs);
+                ast_trans.new_integer((lhs_num != 0 || rhs_num != 0) as i32)
+            },
+        }
+    }
 }
 impl Visitable for LOrExp {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
@@ -563,8 +719,9 @@ pub struct ConstDef {
 
 impl ConstDef {
     fn to_binding(&self, ast_trans: &mut AstTrans) -> (String, Value) {
-        let val = self.const_init_val.const_exp.exp.accept(ast_trans).unwrap();
-        // assert!(ast_trans.get_value_kind(val).is_const());
+        // let val = self.const_init_val.const_exp.exp.accept(ast_trans).unwrap();
+        let val = self.const_init_val.const_exp.exp.const_eval(ast_trans);
+        assert!(ast_trans.get_value_kind(val).is_const());
         (self.ident.clone(), val)
     }
 }
@@ -588,6 +745,25 @@ pub enum BlockItem {
 #[derive(Debug)]
 pub enum LVal {
     IDENT(String),
+}
+impl ConstValue for LVal {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+        match self {
+            LVal::IDENT(ident) => { 
+                if let Some(binding) = ast_trans.lookup(ident) {
+                    match binding {
+                        BindingItem::ConstInt(val) => {
+                            *val
+                        },
+                        _ => panic!("Not a Const Value Binding!"),
+                    }
+                } else {
+                    panic!("undefined name.");
+                }
+            },
+            _ => unimplemented!("Unimplement LVal."),
+        }
+    }
 }
 impl Visitable for LVal {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
@@ -848,6 +1024,28 @@ impl AstTrans {
         self.extend_inst(branch_val);
         self.cur_ctx.set_bb_terminate();
         branch_val
+    }
+    pub fn const_binary(&mut self, bin_op: BinaryOp, lhs: Value, rhs: Value) -> Value {
+        assert!(self.get_value_kind(lhs).is_const() && self.get_value_kind(rhs).is_const());
+        let lhs_num = self.get_const(lhs);
+        let rhs_num = self.get_const(rhs);
+        let val_num = match bin_op {
+            BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
+            BinaryOp::Eq => (lhs_num == rhs_num) as i32,
+            BinaryOp::Gt => (lhs_num > rhs_num) as i32,
+            BinaryOp::Lt => (lhs_num < rhs_num) as i32,
+            BinaryOp::Ge => (lhs_num >= rhs_num) as i32,
+            BinaryOp::Le => (lhs_num <= rhs_num) as i32,
+            BinaryOp::Add => lhs_num + rhs_num,
+            BinaryOp::Sub => lhs_num - rhs_num,
+            BinaryOp::Mul => lhs_num * rhs_num,
+            BinaryOp::Div => lhs_num / rhs_num,
+            BinaryOp::Mod => lhs_num % rhs_num,
+            BinaryOp::Or => (lhs_num !=0 || rhs_num != 0) as i32,
+            BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
+            _ => unimplemented!("Binary op not implement!"), 
+        };
+        self.new_integer(val_num)
     }
     pub fn new_binary(&mut self, bin_op: BinaryOp, lhs: Value, rhs: Value) -> Value {
         let func_data = self.get_func_data_mut();
