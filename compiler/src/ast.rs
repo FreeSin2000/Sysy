@@ -136,7 +136,6 @@ impl Visitable for Stmt {
                     Some(ret)
                 },
                 Self::IfStmt(exp, then_stmt, opt_else_stmt) => {
-                    ast_trans.enter_scope();
 
                     let cond_val = exp.accept(ast_trans).unwrap();
 
@@ -155,13 +154,17 @@ impl Visitable for Stmt {
                             let br_inst = ast_trans.new_branch(cond_val, then_block, else_block);
 
                             ast_trans.extend_bb(then_block);
+                            ast_trans.enter_scope();
                             then_stmt.accept(ast_trans);
+                            ast_trans.exit_scope();
                             if !ast_trans.is_cur_bb_terminate() {
                                 ast_trans.new_jump(end_block);
                             }
                             
                             ast_trans.extend_bb(else_block);
+                            ast_trans.enter_scope();
                             else_stmt.accept(ast_trans);
+                            ast_trans.exit_scope();
 
                             if !ast_trans.is_cur_bb_terminate() {
                                 ast_trans.new_jump(end_block);
@@ -174,7 +177,9 @@ impl Visitable for Stmt {
                             let br_inst = ast_trans.new_branch(cond_val, then_block, end_block);
 
                             ast_trans.extend_bb(then_block);
+                            ast_trans.enter_scope();
                             then_stmt.accept(ast_trans);
+                            ast_trans.exit_scope();
 
                             if !ast_trans.is_cur_bb_terminate() {
                                 ast_trans.new_jump(end_block);
@@ -182,7 +187,6 @@ impl Visitable for Stmt {
                             ast_trans.extend_bb(end_block);
                         },
                     };
-                    ast_trans.exit_scope();
                     None
                 },
             }
