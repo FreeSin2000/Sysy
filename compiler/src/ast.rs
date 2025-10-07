@@ -91,6 +91,8 @@ pub enum Stmt {
     RetExp(Exp),
     IfStmt(Exp, Box<Stmt>, Option<Box<Stmt>>),
     WhileStmt(Exp, Box<Stmt>),
+    ContStmt,
+    BreakStmt,
 }
 
 pub trait Visitable {
@@ -197,13 +199,29 @@ impl Visitable for Stmt {
 
                     ast_trans.extend_bb(body_bb);
                     ast_trans.enter_scope();
+
+                    ast_trans.enter_loop(entry_bb, end_bb);
                     stmt.accept(ast_trans);
                     if !ast_trans.is_cur_bb_terminate() {
                         ast_trans.new_jump(entry_bb);
                     }
+                    ast_trans.exit_loop();
+
                     ast_trans.exit_scope();
 
                     ast_trans.extend_bb(end_bb);
+                    None
+                },
+                Self::ContStmt => {
+                    let entry_bb = ast_trans.cur_loop().entry_bb;
+                    ast_trans.new_jump(entry_bb);
+                    None
+                },
+                Self::BreakStmt => {
+                    let end_bb = ast_trans.cur_loop().end_bb;
+                    if !ast_trans.is_cur_bb_terminate() {
+                        ast_trans.new_jump(end_bb);
+                    }
                     None
                 },
             }
@@ -889,6 +907,38 @@ pub struct ScopeStack {
     pub stack: Vec<HashMap<String, BindingItem>>,
     pub global_uid: i32,
 }
+pub struct LoopTarget {
+    pub entry_bb: BasicBlock,
+    pub end_bb: BasicBlock,
+}
+
+impl LoopTarget {
+    pub fn new(entry_bb: BasicBlock, end_bb: BasicBlock) -> LoopTarget {
+        LoopTarget {
+            entry_bb,
+            end_bb,
+        }
+    }
+}
+pub struct LoopStack {
+    pub stack: Vec<LoopTarget>,
+}
+impl LoopStack {
+    pub fn new() -> LoopStack {
+        LoopStack {
+            stack: Vec::new(),
+        }
+    }
+    pub fn push_loop(&mut self, entry_bb: BasicBlock, exit_bb: BasicBlock) {
+        self.stack.push(LoopTarget::new(entry_bb, exit_bb));
+    }
+    pub fn pop_loop(&mut self) {
+        self.stack.pop();
+    }
+    pub fn top_loop(&mut self) -> &LoopTarget {
+        self.stack.last().unwrap()
+    }
+}
 impl ScopeStack {
     pub fn new() -> ScopeStack {
         ScopeStack {
@@ -931,6 +981,7 @@ impl ScopeStack {
 pub struct AstTrans {
     pub local_sym_tab: HashMap<String, BindingItem>,
     pub scope_manager: ScopeStack,
+    pub loop_manager: LoopStack,
     pub koopa_program: Program,
     pub cur_ctx: AstContext,
 }
@@ -942,6 +993,7 @@ impl AstTrans {
             koopa_program: Program::new(),
             cur_ctx: AstContext::new(),
             scope_manager: ScopeStack::new(),
+            loop_manager: LoopStack::new(),
         }
     }
 
@@ -1052,32 +1104,6 @@ impl AstTrans {
         let bin_val = func_data.dfg_mut().new_value().binary(bin_op, lhs, rhs);
         self.extend_inst(bin_val);
         bin_val
-        // if self.get_value_kind(lhs).is_const() && self.get_value_kind(rhs).is_const() {
-        //     let lhs_num = self.get_const(lhs);
-        //     let rhs_num = self.get_const(rhs);
-        //     let val_num = match bin_op {
-        //         BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
-        //         BinaryOp::Eq => (lhs_num == rhs_num) as i32,
-        //         BinaryOp::Gt => (lhs_num > rhs_num) as i32,
-        //         BinaryOp::Lt => (lhs_num < rhs_num) as i32,
-        //         BinaryOp::Ge => (lhs_num >= rhs_num) as i32,
-        //         BinaryOp::Le => (lhs_num <= rhs_num) as i32,
-        //         BinaryOp::Add => lhs_num + rhs_num,
-        //         BinaryOp::Sub => lhs_num - rhs_num,
-        //         BinaryOp::Mul => lhs_num * rhs_num,
-        //         BinaryOp::Div => lhs_num / rhs_num,
-        //         BinaryOp::Mod => lhs_num % rhs_num,
-        //         BinaryOp::Or => (lhs_num !=0 || rhs_num != 0) as i32,
-        //         BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
-        //         _ => unimplemented!("Binary op not implement!"), 
-        //     };
-        //     self.new_integer(val_num)
-        // } else {
-        //     let func_data = self.get_func_data_mut();
-        //     let bin_val = func_data.dfg_mut().new_value().binary(bin_op, lhs, rhs);
-        //     self.extend_inst(bin_val);
-        //     bin_val
-        // }
     }
 
     pub fn new_load(&mut self, val: Value) -> Value {
@@ -1119,16 +1145,22 @@ impl AstTrans {
         self.scope_manager.pop_scope();
     }
     pub fn bind(&mut self, name: String, binding: BindingItem) {
-        // self.local_sym_tab.insert(name, binding);
         self.scope_manager.insert_binding(&name, binding);
     }
     pub fn lookup(&mut self, name: &String) -> Option<&BindingItem> {
-        // self.local_sym_tab.get(name)
         self.scope_manager.get_binding(name)
     }
-
     pub fn next_uid(&mut self) -> i32 {
         self.scope_manager.new_uid()
+    }
+    pub fn enter_loop(&mut self, loop_enter: BasicBlock, loop_end: BasicBlock)  {
+        self.loop_manager.push_loop(loop_enter, loop_end);
+    }
+    pub fn exit_loop(&mut self)  {
+        self.loop_manager.pop_loop();
+    }
+    pub fn cur_loop(&mut self) -> &LoopTarget {
+        self.loop_manager.top_loop()
     }
     pub fn const_num(val_data: &ValueData) -> i32 {
         match val_data.kind() {

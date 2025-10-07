@@ -43,6 +43,8 @@ NoIfStmt: Stmt = {
   <opt_exp: Exp?> ";" => Stmt::OptExp(<>),
   <block: Block> => Stmt::Block(<>),
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::LValExp(lval, exp),
+  "continue" ";" => Stmt::ContStmt,
+  "break" ";" => Stmt::BreakStmt,
 }
 
 OpenIfStmt: Stmt = {

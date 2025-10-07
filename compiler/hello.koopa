@@ -6,7 +6,7 @@ fun @main(): i32 {
   br 1, %while_body_1, %while_end_2
 
 %while_body_1:
-  ret 1
+  jump %while_entry_0
 
 %while_end_2:
   ret 0
