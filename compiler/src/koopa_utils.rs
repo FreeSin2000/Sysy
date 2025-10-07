@@ -145,7 +145,7 @@ impl KoopaTrans {
             ValueKind::Store(store_val) => self.handle_store(func_data, store_val),
             ValueKind::Load(load_val) => self.handle_load(func_data, load_val, inst),
             ValueKind::Alloc(_) => String::from(""),
-            ValueKind::Jump(_) => String::from(""),
+            ValueKind::Jump(jmp) => self.handle_jump(func_data, jmp),
             ValueKind::Branch(br) => self.handle_branch(func_data, br),
             _ => panic!("invalid inst"),
         }
