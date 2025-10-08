@@ -17,6 +17,12 @@ int main() {
 int f (int i, int j) {
   return i + j;
 }
+
+void g(int x) {
+  // TODO: none-value return
+  // TODO: params var coverance
+  int x = x + 1;
+}
 // int main() {
 //   int i = 114;
 //   if (i >= 233)
