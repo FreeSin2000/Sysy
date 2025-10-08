@@ -41,10 +41,10 @@ fn main() -> Result<()> {
   // koopa_trans.pre_analyze(program);
   // let asm_str = koopa_trans.generate_program(program);
   // println!("riscv:\n{}", asm_str);
-  // match mode.as_str() {
-  //   "-koopa" => write(output, program_str)?,
-  //   "-riscv" => write(output, asm_str)?,
-  //   _ => todo!("not implement other modes."),
-  // }
+  match mode.as_str() {
+    "-koopa" => write(output, program_str)?,
+    // "-riscv" => write(output, asm_str)?,
+    _ => todo!("not implement other modes."),
+  }
   Ok(())
 }

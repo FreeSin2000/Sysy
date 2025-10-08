@@ -16,12 +16,14 @@ impl Visitable for CompUnit {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         let name = String::from("@") + &self.func_def.ident;
         let mut params_ty = vec![];
+        let mut fparams_name = vec![];
         if let Some(func_params) = &self.func_def.params {
             for param in &func_params.params {
                 let param_type = match param.param_type {
                     BType::Int => Type::get(TypeKind::Int32),
                 };
                 let param_name = param.param_name.clone();
+                fparams_name.push(param_name.clone());
                 params_ty.push((Some(format!("@{}", param_name)), param_type));
             }
         }
@@ -29,13 +31,23 @@ impl Visitable for CompUnit {
             FuncType::Int => Type::get_i32(),
             FuncType::Void => Type::get_unit(),
         };       
-        let func = ast_trans.new_func(name, params_ty, ret_ty);
+        let func = ast_trans.new_func(name, params_ty.clone(), ret_ty);
         ast_trans.bind(self.func_def.ident.clone(), BindingItem::Func(func));
         if let Some(comp_unit) = &*self.comp_unit {
             comp_unit.accept(ast_trans);
         }
-        ast_trans.cur_ctx.set_func(func);
+        ast_trans.set_func(func);
+        ast_trans.enter_scope();
+        let func_data = ast_trans.get_func_data();
+        let mut fparams_val: Vec<Value> = Vec::new();
+        for fparam_val in func_data.params() {
+            fparams_val.push(*fparam_val);
+        }
+        for (param_name, param_val) in fparams_name.into_iter().zip(fparams_val.into_iter()) {
+            ast_trans.bind(param_name, BindingItem::VarInt(param_val));
+        }
         self.func_def.accept(ast_trans);
+        ast_trans.exit_scope();
         None
     }
 }
@@ -68,7 +80,7 @@ impl Visitable for FuncDef {
         // };       
         // let func = ast_trans.new_func(name, params_ty, ret_ty);
         // ast_trans.bind(self.ident.clone(), BindingItem::Func(func));
-        ast_trans.enter_scope();
+        // ast_trans.enter_scope();
 
         let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
         ast_trans.extend_bb(entry_bb);
@@ -76,7 +88,7 @@ impl Visitable for FuncDef {
         if !ast_trans.is_cur_bb_terminate() {
             ast_trans.new_ret(None);
         }
-        ast_trans.exit_scope();
+        // ast_trans.exit_scope();
         None
     }
 }
@@ -432,6 +444,7 @@ impl Visitable for PrimaryExp {
                         Some(load_val)
                     },
                     ValueKind::Load(load) => Some(val),
+                    ValueKind::FuncArgRef(arg) => Some(val),
                     _ => unimplemented!("Unimplement LVal kind."),
                 }
             },
@@ -1127,8 +1140,11 @@ impl AstTrans {
     }
     pub fn new_func(&mut self, func_name: String, func_params_ty: Vec<(Option<String>, Type)>, func_ret_ty: Type) -> Function {
         let func = self.koopa_program.new_func(FunctionData::with_param_names(func_name, func_params_ty, func_ret_ty));
-        self.cur_ctx.set_func(func);
+        // self.cur_ctx.set_func(func);
         func
+    }
+    pub fn set_func(&mut self, func: Function) {
+        self.cur_ctx.set_func(func);
     }
     pub fn new_basic_block(&mut self, bb_name: Option<String>) -> BasicBlock {
         let func_data = self.get_func_data_mut();

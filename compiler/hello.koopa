@@ -1,3 +1,9 @@
+fun @f(@i: i32, @j: i32): i32 {
+%entry:
+  %0 = add @i, @j
+  ret %0
+}
+
 fun @main(): i32 {
 %entry:
   jump %while_entry_0
@@ -9,9 +15,6 @@ fun @main(): i32 {
   jump %while_entry_0
 
 %while_end_2:
-  ret 0
-}
-
-fun @f(@x: i32, @y: i32) {
-%entry:
+  %1 = call @f(1, 2)
+  ret %1
 }
