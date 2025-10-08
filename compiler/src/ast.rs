@@ -5,52 +5,112 @@ use koopa::ir::entities::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-#[derive(Debug)]
+// CompUnit    ::= [CompUnit] FuncDef;
+#[derive(Debug,Clone)]
 pub struct CompUnit {
+    pub comp_unit: Box<Option<CompUnit>>,
     pub func_def: FuncDef,
 }
 
 impl Visitable for CompUnit {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
-        *ast_trans = AstTrans::new();
-        ast_trans.enter_scope();
+        let name = String::from("@") + &self.func_def.ident;
+        let mut params_ty = vec![];
+        if let Some(func_params) = &self.func_def.params {
+            for param in &func_params.params {
+                let param_type = match param.param_type {
+                    BType::Int => Type::get(TypeKind::Int32),
+                };
+                let param_name = param.param_name.clone();
+                params_ty.push((Some(format!("@{}", param_name)), param_type));
+            }
+        }
+        let ret_ty = match &self.func_def.func_type {
+            FuncType::Int => Type::get_i32(),
+            FuncType::Void => Type::get_unit(),
+        };       
+        let func = ast_trans.new_func(name, params_ty, ret_ty);
+        ast_trans.bind(self.func_def.ident.clone(), BindingItem::Func(func));
+        if let Some(comp_unit) = &*self.comp_unit {
+            comp_unit.accept(ast_trans);
+        }
+        ast_trans.cur_ctx.set_func(func);
         self.func_def.accept(ast_trans);
-        ast_trans.exit_scope();
         None
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct FuncDef {
     pub func_type: FuncType,
     pub ident: String,
+    pub params: Option<FuncFParams>,
     pub block: Block,
 }
 
 impl Visitable for FuncDef {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
-        let name = String::from("@") + &self.ident;
-        let params_ty = vec![];
-        let ret_ty = match &self.func_type {
-            FuncType::Int => Type::get_i32(),
-        };       
+        // let name = String::from("@") + &self.ident;
+        // let mut params_ty = vec![];
+        // // println!("func_name: {}", name);
+        // if let Some(func_params) = &self.params {
+        //     for param in &func_params.params {
+        //         let param_type = match param.param_type {
+        //             BType::Int => Type::get(TypeKind::Int32),
+        //         };
+        //         let param_name = param.param_name.clone();
+        //         params_ty.push((Some(format!("@{}", param_name)), param_type));
+        //     }
+        // }
+        // let ret_ty = match &self.func_type {
+        //     FuncType::Int => Type::get_i32(),
+        //     FuncType::Void => Type::get_unit(),
+        // };       
+        // let func = ast_trans.new_func(name, params_ty, ret_ty);
+        // ast_trans.bind(self.ident.clone(), BindingItem::Func(func));
+        ast_trans.enter_scope();
 
-        let func = ast_trans.new_func(name.into(), params_ty, ret_ty);
         let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
         ast_trans.extend_bb(entry_bb);
-
         self.block.accept(ast_trans);
-
+        if !ast_trans.is_cur_bb_terminate() {
+            ast_trans.new_ret(None);
+        }
+        ast_trans.exit_scope();
         None
     }
 }
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum FuncType {
     Int,
+    Void,
+}
+// FuncFParams ::= FuncFParam {"," FuncFParam};
+#[derive(Debug,Clone)]
+pub struct FuncFParams {
+    pub params: Vec<FuncFParam>,
+}
+
+// FuncFParam  ::= BType IDENT;
+#[derive(Debug,Clone)]
+pub struct FuncFParam {
+    pub param_type: BType,
+    pub param_name: String,
+}
+
+// FuncRParams ::= Exp {"," Exp};
+#[derive(Debug,Clone)]
+pub struct FuncRParams {
+    pub params: Vec<Exp>,
+}
+impl Visitable for FuncRParams {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
+        None
+    }
 }
 
 // Block         ::= "{" {BlockItem} "}";
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Block {
     pub block_items: Vec<BlockItem>,
 }
@@ -83,7 +143,7 @@ impl Visitable for Block {
 
 // Stmt          ::= LVal "=" Exp ";"
 //                 | "return" Exp ";";
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum Stmt {
     LValExp(LVal, Exp),
     OptExp(Option<Exp>),
@@ -229,7 +289,7 @@ impl Visitable for Stmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum Number {
     INT_CONST(i32),
 }
@@ -254,7 +314,7 @@ impl Visitable for Number {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum UnaryOp {
     Plus,
     Minus,
@@ -262,10 +322,11 @@ pub enum UnaryOp {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum UnaryExp {
     PrimaryExp(PrimaryExp),
     UnaryOpExp(UnaryOp, Box<UnaryExp>),
+    FuncCall(String, Option<FuncRParams>),
 }
 
 impl ConstValue for UnaryExp {
@@ -286,7 +347,11 @@ impl ConstValue for UnaryExp {
                         ast_trans.new_binary(BinaryOp::Eq, lhs, rhs)
                     },
                 }
-            }
+            },
+            UnaryExp::FuncCall(ident, opt_params) => {
+                panic!("Const can't be assigned with func call.");
+                ast_trans.new_integer(0)
+            },
         }
     }
 }
@@ -312,12 +377,29 @@ impl Visitable for UnaryExp {
                     },
                 }
             }
+            UnaryExp::FuncCall(ident, opt_params) => {
+                let func_bind = ast_trans.lookup(ident).unwrap().clone();
+                let mut real_params: Vec<Value> = Vec::new();
+                if let Some(params) = opt_params {
+                    for param_ref in params.params.iter() {
+                        let param = param_ref.clone();
+                        let param_val = param.accept(ast_trans).unwrap();
+                        real_params.push(param_val);
+                    }
+                }
+                let func = match func_bind {
+                    BindingItem::Func(f) => f,
+                    _ => panic!("{} is not a func.", ident),
+                };
+                let call_val = ast_trans.new_call(func, real_params);
+                Some(call_val)
+            },
         }
     }
 }
 
 // PrimaryExp    ::= "(" Exp ")" | LVal | Number;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum PrimaryExp {
     ParenthesizedExp(Exp),
     LVal(LVal),
@@ -358,7 +440,7 @@ impl Visitable for PrimaryExp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Exp {
     pub lor_exp: Box<LOrExp>,
 }
@@ -375,14 +457,14 @@ impl ConstValue for Exp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum MulOp {
     Mul,
     Div,
     Mod,
 } 
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum MulExp {
     UnaryExp(UnaryExp),
     MulOpExp(Box<MulExp>, MulOp, UnaryExp),
@@ -423,12 +505,12 @@ impl Visitable for MulExp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum AddOp {
     Add,
     Sub,
 } 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum AddExp {
     MulExp(MulExp),
     AddOpExp(Box<AddExp>, AddOp, MulExp),
@@ -468,7 +550,7 @@ impl Visitable for AddExp {
 }
 
 // RelExp      ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum RelExp {
     AddExp(AddExp),
     RelOpExp(Box<RelExp>, RelOp, AddExp),
@@ -514,7 +596,7 @@ impl Visitable for RelExp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum RelOp {
     Lt,
     Le,
@@ -524,7 +606,7 @@ pub enum RelOp {
 
 // EqExp       ::= RelExp | EqExp ("==" | "!=") RelExp;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum EqExp {
     RelExp(RelExp),
     EqOpExp(Box<EqExp>, EqOp, RelExp),
@@ -564,7 +646,7 @@ impl Visitable for EqExp {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum EqOp {
     Eq,
     NotEq,
@@ -572,7 +654,7 @@ pub enum EqOp {
 
 // LAndExp     ::= EqExp | LAndExp "&&" EqExp;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum LAndExp {
     EqExp(EqExp),
     LAndOpExp(Box<LAndExp>, EqExp),
@@ -633,7 +715,7 @@ impl Visitable for LAndExp {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum LOrExp {
     LAndExp(LAndExp),
     LOrOpExp(Box<LOrExp>, LAndExp),
@@ -694,14 +776,14 @@ impl Visitable for LOrExp {
 }
 
 // Decl          ::= ConstDecl | VarDecl;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum Decl {
     ConstDecl(ConstDecl),
     VarDecl(VarDecl),
 }
 
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct ConstDecl {
     pub btype: BType,
     pub const_defs: Vec<ConstDef>,
@@ -723,13 +805,13 @@ impl ConstDecl {
 }
 
 // BType         ::= "int";
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum BType {
     Int,
 }
 
 // ConstDef      ::= IDENT "=" ConstInitVal;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct ConstDef {
     pub ident: String,
     pub const_init_val: ConstInitVal,
@@ -745,14 +827,14 @@ impl ConstDef {
 }
 
 // ConstInitVal  ::= ConstExp;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct ConstInitVal {
     pub const_exp: ConstExp,
 }
 
 
 // BlockItem     ::= Decl | Stmt;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum BlockItem {
     Decl(Decl),
     Stmt(Stmt),
@@ -760,7 +842,7 @@ pub enum BlockItem {
 
 
 // LVal          ::= IDENT;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum LVal {
     IDENT(String),
 }
@@ -806,13 +888,13 @@ impl Visitable for LVal {
     }
 }
 // ConstExp      ::= Exp;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct ConstExp {
     pub exp: Exp,
 }
 
 // InitVal       ::= Exp;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct InitVal {
     pub exp: Exp,
 }
@@ -823,14 +905,14 @@ impl Visitable for InitVal {
 }
 
 // VarDef        ::= IDENT | IDENT "=" InitVal;
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum VarDef {
     IDENT(String),
     IDENTInitVal(String, InitVal),
 }
 
 // VarDecl       ::= BType VarDef {"," VarDef} ";";
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct VarDecl {
     pub btype: BType,
     pub var_defs: Vec<VarDef>,
@@ -861,10 +943,11 @@ impl VarDecl {
         }
     }
 }
-
+#[derive(Debug,Clone)]
 pub enum BindingItem {
     ConstInt(Value),
     VarInt(Value),
+    Func(Function),
 }
 pub struct AstContext {
     pub func: Option<Function>,
@@ -1126,7 +1209,12 @@ impl AstTrans {
         self.extend_inst(alloc_val);
         alloc_val
     }
-
+    pub fn new_call(&mut self, func: Function, params: Vec<Value>) -> Value {
+        let func_data = self.get_func_data_mut();
+        let call_val = func_data.dfg_mut().new_value().call(func, params);
+        self.extend_inst(call_val);
+        call_val
+    }
     pub fn extend_inst(&mut self, inst: Value) {
         let bb = self.get_cur_bb();
         let func_data = self.get_func_data_mut();

@@ -12,19 +12,30 @@ match {
   _
 }
 
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
+pub CompUnit: CompUnit = <comp_unit: CompUnit?> <func_def: FuncDef> => CompUnit{comp_unit:Box::new(comp_unit), func_def:func_def};
 
+// FuncDef     ::= FuncType IDENT "(" [FuncFParams] ")" Block;
 FuncDef: FuncDef = {
-  <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => {
+  <func_type: FuncType> <ident: Ident> "(" <params: FuncFParams?> ")" <block: Block> => {
     FuncDef { <> }
   }
 }
 
-FuncType: FuncType = <btype: BType> => match <> {
-  BType::Int => FuncType::Int,
-  _ => unimplemented!("Not implement othe binding types."),
-};
+FuncType: FuncType = {
+  <btype: BType> => match <> {
+    BType::Int => FuncType::Int,
+    _ => unimplemented!("Not implement othe binding types."),
+  },
+  "void" => FuncType::Void,
+} 
+// FuncFParams ::= FuncFParam {"," FuncFParam};
+FuncFParams: FuncFParams = <params: Comma<FuncFParam>> => FuncFParams{<>};
 
+// FuncFParam  ::= BType IDENT;
+FuncFParam: FuncFParam = <param_type: BType> <param_name: Ident> => FuncFParam{param_type, param_name};
+
+// FuncRParams ::= Exp {"," Exp};
+FuncRParams: FuncRParams = <params: Comma<Exp>> => FuncRParams{params};
 
 // Block         ::= "{" {BlockItem} "}";
 // Block: Block = "{" <stmt: Stmt> "}" => Block { <> };
@@ -72,11 +83,14 @@ PrimaryExp: PrimaryExp = {
 Number: Number = {
   <num: IntConst> => Number::INT_CONST(<>),
 }
+
+// | IDENT "(" [FuncRParams] ")"
 UnaryExp: UnaryExp = {
   <primary_exp: PrimaryExp> => UnaryExp::PrimaryExp(primary_exp),
   <unary_op: "+"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Plus, Box::new(unary_exp)),
   <unary_op: "-"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Minus, Box::new(unary_exp)),
   <unary_op: "!"> <unary_exp: UnaryExp> => UnaryExp::UnaryOpExp(UnaryOp::Not, Box::new(unary_exp)),
+  <ident: Ident> "(" <params: FuncRParams?> ")" => UnaryExp::FuncCall(ident, params),
 }
 
 MulExp: MulExp = {

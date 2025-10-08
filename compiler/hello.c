@@ -6,15 +6,17 @@
 //   // int i, j = 114, k;
 //   // return 0;
 // }
+int f (int x, int y) {
+  return 114;
+}
 int main() {
   // int i = 0;
   // while (i < 10) i = i + 1;
   while (1) {
     continue;
   }
-  return 0;
+  return f(1, 2);
 }
-
 // int main() {
 //   int i = 114;
 //   if (i >= 233)
