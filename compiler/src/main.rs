@@ -28,9 +28,10 @@ fn main() -> Result<()> {
   let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
   println!("mode:\n{}", mode);
   // 输出解析得到的 AST
-  println!("ast:\n{:#?}", ast);
+  // println!("ast:\n{:#?}", ast);
   let mut ast_trans = AstTrans::new();
   ast_trans.enter_scope();
+  ast.collect_global(&mut ast_trans);
   ast.accept(&mut ast_trans);
   ast_trans.exit_scope();
   let program = &ast_trans.koopa_program; 

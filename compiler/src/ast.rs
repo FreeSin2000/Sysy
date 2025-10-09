@@ -12,40 +12,56 @@ pub struct CompUnit {
     pub func_def: FuncDef,
 }
 
-impl Visitable for CompUnit {
-    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
-        let name = String::from("@") + &self.func_def.ident;
-        let mut params_ty = vec![];
-        let mut fparams_name = vec![];
-        if let Some(func_params) = &self.func_def.params {
-            for param in &func_params.params {
-                let param_type = match param.param_type {
-                    BType::Int => Type::get(TypeKind::Int32),
-                };
-                let param_name = param.param_name.clone();
-                fparams_name.push(param_name.clone());
-                params_ty.push((Some(format!("@{}", param_name)), param_type));
-            }
+
+impl CompUnit {
+    pub fn collect_global(&self, ast_trans: &mut AstTrans) {
+
+        if let Some(comp_unit) = &*self.comp_unit {
+            comp_unit.collect_global(ast_trans);
         }
+
+        let func_name = String::from("@") + &self.func_def.ident;
+        // let mut params_ty = vec![];
+        // if let Some(func_params) = &self.func_def.params {
+        //     for param in &func_params.params {
+        //         let param_type = match param.param_type {
+        //             BType::Int => Type::get(TypeKind::Int32),
+        //         };
+        //         let param_name = param.param_name.clone();
+        //         params_ty.push((Some(format!("@{}", param_name)), param_type));
+        //     }
+        // }
+        let params_ty: Vec<(Option<String>, Type)> = 
+            if let Some(func_params) = &self.func_def.params {
+                func_params.params
+                    .clone()
+                    .into_iter()
+                    .map(|param| {
+                        let param_type = match param.param_type {
+                            BType::Int => Type::get(TypeKind::Int32),
+                        };
+                        let param_name = param.param_name.clone();
+                        (Some(format!("@{}", param_name)), param_type)
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
         let ret_ty = match &self.func_def.func_type {
             FuncType::Int => Type::get_i32(),
             FuncType::Void => Type::get_unit(),
         };       
-        let func = ast_trans.new_func(name, params_ty.clone(), ret_ty);
+        let func = ast_trans.new_func(func_name, params_ty.clone(), ret_ty);
         ast_trans.bind(self.func_def.ident.clone(), BindingItem::Func(func));
+    }
+}
+
+impl Visitable for CompUnit {
+    fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         if let Some(comp_unit) = &*self.comp_unit {
             comp_unit.accept(ast_trans);
         }
-        ast_trans.set_func(func);
         ast_trans.enter_scope();
-        let func_data = ast_trans.get_func_data();
-        let mut fparams_val: Vec<Value> = Vec::new();
-        for fparam_val in func_data.params() {
-            fparams_val.push(*fparam_val);
-        }
-        for (param_name, param_val) in fparams_name.into_iter().zip(fparams_val.into_iter()) {
-            ast_trans.bind(param_name, BindingItem::VarInt(param_val));
-        }
         self.func_def.accept(ast_trans);
         ast_trans.exit_scope();
         None
@@ -62,33 +78,58 @@ pub struct FuncDef {
 
 impl Visitable for FuncDef {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
-        // let name = String::from("@") + &self.ident;
-        // let mut params_ty = vec![];
-        // // println!("func_name: {}", name);
-        // if let Some(func_params) = &self.params {
-        //     for param in &func_params.params {
-        //         let param_type = match param.param_type {
-        //             BType::Int => Type::get(TypeKind::Int32),
-        //         };
-        //         let param_name = param.param_name.clone();
-        //         params_ty.push((Some(format!("@{}", param_name)), param_type));
-        //     }
-        // }
-        // let ret_ty = match &self.func_type {
-        //     FuncType::Int => Type::get_i32(),
-        //     FuncType::Void => Type::get_unit(),
-        // };       
-        // let func = ast_trans.new_func(name, params_ty, ret_ty);
-        // ast_trans.bind(self.ident.clone(), BindingItem::Func(func));
-        // ast_trans.enter_scope();
+        let func_binding = ast_trans.lookup(&self.ident).unwrap();
+        let func = match func_binding {
+            BindingItem::Func(f) => *f,
+            _ => panic!("Not a func."),
+        };
+
+        ast_trans.set_func(func);
+
+        // let mut fparams_name = vec![];
+        let fparams_name: Vec<String> = 
+            if let Some(func_params) = &self.params {
+                // for param in &func_params.params {
+                //     let param_name = param.param_name.clone();
+                //     fparams_name.push(param_name.clone());
+                // }
+                func_params.params
+                    .iter()
+                    .map(|param| param.param_name.clone())
+                    .collect()
+            } else {
+                vec![]
+            };
 
         let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
         ast_trans.extend_bb(entry_bb);
+        let func_data = ast_trans.get_func_data();
+
+        let fparams_val: Vec<Value> = func_data.params()
+            .to_vec();
+
+        // for (param_name, param_val) in fparams_name.into_iter().zip(fparams_val.into_iter()) {
+        //     let temp_param = ast_trans.new_alloc(Type::get(TypeKind::Int32));
+        //     ast_trans.set_value_name(temp_param, Some(format!("%{}", &param_name)));
+        //     ast_trans.new_store(param_val, temp_param);
+        //     ast_trans.bind(param_name, BindingItem::VarInt(temp_param));
+        // }
+
+        fparams_name.into_iter()
+            .zip(fparams_val.into_iter())
+            .for_each( |(param_name, param_val)| {
+                let temp_param = ast_trans.new_alloc(Type::get(TypeKind::Int32));
+                ast_trans.set_value_name(temp_param, Some(format!("%{}", &param_name)));
+                ast_trans.new_store(param_val, temp_param);
+                ast_trans.bind(param_name, BindingItem::VarInt(temp_param));
+            });
+        
+        ast_trans.enter_scope();
         self.block.accept(ast_trans);
         if !ast_trans.is_cur_bb_terminate() {
             ast_trans.new_ret(None);
         }
-        // ast_trans.exit_scope();
+        ast_trans.exit_scope();
         None
     }
 }
@@ -160,7 +201,7 @@ pub enum Stmt {
     LValExp(LVal, Exp),
     OptExp(Option<Exp>),
     Block(Block),
-    RetExp(Exp),
+    RetExp(Option<Exp>),
     IfStmt(Exp, Box<Stmt>, Option<Box<Stmt>>),
     WhileStmt(Exp, Box<Stmt>),
     ContStmt,
@@ -196,9 +237,12 @@ impl Visitable for Stmt {
                     block.accept(ast_trans);
                     None
                 },
-                Self::RetExp(exp) => {
-                    let res = exp.accept(ast_trans).unwrap();
-                    let ret = ast_trans.new_ret(Some(res));
+                Self::RetExp(ret_exp) => {
+                    let res = match ret_exp {
+                        None => None,
+                        Some(exp) => exp.accept(ast_trans),
+                    };
+                    let ret = ast_trans.new_ret(res);
                     Some(ret)
                 },
                 Self::IfStmt(exp, then_stmt, opt_else_stmt) => {
@@ -391,14 +435,24 @@ impl Visitable for UnaryExp {
             }
             UnaryExp::FuncCall(ident, opt_params) => {
                 let func_bind = ast_trans.lookup(ident).unwrap().clone();
-                let mut real_params: Vec<Value> = Vec::new();
+                // let mut real_params: Vec<Value> = Vec::new();
+                // if let Some(params) = opt_params {
+                //     for param_ref in params.params.iter() {
+                //         let param = param_ref.clone();
+                //         let param_val = param.accept(ast_trans).unwrap();
+                //         real_params.push(param_val);
+                //     }
+                // }
+                let real_params: Vec<Value> = 
                 if let Some(params) = opt_params {
-                    for param_ref in params.params.iter() {
-                        let param = param_ref.clone();
-                        let param_val = param.accept(ast_trans).unwrap();
-                        real_params.push(param_val);
-                    }
-                }
+                    params.params
+                        .clone()
+                        .into_iter()
+                        .map(|param| {
+                            param.accept(ast_trans).unwrap()
+                        })
+                        .collect()
+                } else { vec![]};
                 let func = match func_bind {
                     BindingItem::Func(f) => f,
                     _ => panic!("{} is not a func.", ident),

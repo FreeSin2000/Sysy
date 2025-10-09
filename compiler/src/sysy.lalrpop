@@ -50,7 +50,7 @@ Stmt: Stmt = {
 }
 
 NoIfStmt: Stmt = {
-  "return" <exp: Exp> ";" => Stmt::RetExp(<>),
+  "return" <exp: Exp?> ";" => Stmt::RetExp(<>),
   <opt_exp: Exp?> ";" => Stmt::OptExp(<>),
   <block: Block> => Stmt::Block(<>),
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::LValExp(lval, exp),
