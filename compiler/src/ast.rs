@@ -18,6 +18,18 @@ impl CompUnit {
 
         if let Some(comp_unit) = &*self.comp_unit {
             comp_unit.collect_global(ast_trans);
+        } else {
+            let ty_i32 = Type::get(TypeKind::Int32);
+            let ty_ptr_i32 = Type::get(TypeKind::Pointer(ty_i32.clone()));
+            let ty_unit = Type::get(TypeKind::Unit);
+            ast_trans.new_func_decl(String::from("@getint"),vec![], ty_i32.clone());
+            ast_trans.new_func_decl(String::from("@getch"),vec![], ty_i32.clone());
+            ast_trans.new_func_decl(String::from("@getarray"),vec![ty_ptr_i32.clone()], ty_i32.clone());
+            ast_trans.new_func_decl(String::from("@putint"),vec![ty_i32.clone()], ty_unit.clone());
+            ast_trans.new_func_decl(String::from("@putch"),vec![ty_i32.clone()], ty_unit.clone());
+            ast_trans.new_func_decl(String::from("@putarray"),vec![ty_i32.clone(), ty_ptr_i32.clone()], ty_unit.clone());
+            ast_trans.new_func_decl(String::from("@starttime"),vec![], ty_unit.clone());
+            ast_trans.new_func_decl(String::from("@stoptime"),vec![], ty_unit.clone());
         }
 
         let func_name = String::from("@") + &self.func_def.ident;
@@ -1194,6 +1206,13 @@ impl AstTrans {
     }
     pub fn new_func(&mut self, func_name: String, func_params_ty: Vec<(Option<String>, Type)>, func_ret_ty: Type) -> Function {
         let func = self.koopa_program.new_func(FunctionData::with_param_names(func_name, func_params_ty, func_ret_ty));
+        // self.cur_ctx.set_func(func);
+        func
+    }
+    pub fn new_func_decl(&mut self, func_name: String, func_params_ty: Vec<Type>, func_ret_ty: Type) -> Function {
+        let bind_name = func_name[1..].to_string();
+        let func = self.koopa_program.new_func(FunctionData::new_decl(func_name, func_params_ty, func_ret_ty));
+        self.bind(bind_name, BindingItem::Func(func));
         // self.cur_ctx.set_func(func);
         func
     }

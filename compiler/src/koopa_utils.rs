@@ -77,39 +77,42 @@ impl KoopaTrans {
     pub fn pre_analyze(&mut self, program: &Program) {
         for &func in program.func_layout() {
             let func_data = program.func(func);
+            let opt_entry_bb = func_data.layout().entry_bb();
             let func_name = func_data.name().to_string();
-            let mut func_analysis = FunctionAnalysis::new();
-            let mut cur_frame_size = 0;
-            for (&bb, bb_node) in func_data.layout().bbs() {
-                let insts = bb_node.insts();
-                for (&inst, inst_node) in insts {
-                    let inst_kind = func_data.dfg().value(inst).kind();
-                    match inst_kind {
-                        ValueKind::Call(call) => {
-                            let num_params = call.args().len() as i32;
-                            func_analysis.is_leaf_call = false;
-                            let cur_params_size = (num_params - 8) * 4;
-                            if cur_params_size > cur_frame_size { cur_frame_size = cur_params_size;}
-                        },
-                        _ => {continue;},
-                    };
+            if let Some(_) = opt_entry_bb {
+                let mut func_analysis = FunctionAnalysis::new();
+                let mut cur_frame_size = 0;
+                for (&bb, bb_node) in func_data.layout().bbs() {
+                    let insts = bb_node.insts();
+                    for (&inst, inst_node) in insts {
+                        let inst_kind = func_data.dfg().value(inst).kind();
+                        match inst_kind {
+                            ValueKind::Call(call) => {
+                                let num_params = call.args().len() as i32;
+                                func_analysis.is_leaf_call = false;
+                                let cur_params_size = (num_params - 8) * 4;
+                                if cur_params_size > cur_frame_size { cur_frame_size = cur_params_size;}
+                            },
+                            _ => {continue;},
+                        };
+                    }
                 }
-            }
-            func_analysis.stack_frame_size = cur_frame_size;
+                func_analysis.stack_frame_size = cur_frame_size;
 
-            for (&bb, bb_node) in func_data.layout().bbs() {
-                let insts = bb_node.insts();
-                for (&inst, inst_node) in insts {
-                    let inst_ty = func_data.dfg().value(inst).ty();
-                    if !inst_ty.is_unit() {
-                        // println!("{}: {:?}", func_name, func_data.dfg().value(inst));
-                        cur_frame_size = Self::allocate_stack_slot(&mut func_analysis, inst, inst_ty);
-                    } 
+                for (&bb, bb_node) in func_data.layout().bbs() {
+                    let insts = bb_node.insts();
+                    for (&inst, inst_node) in insts {
+                        let inst_ty = func_data.dfg().value(inst).ty();
+                        if !inst_ty.is_unit() {
+                            // println!("{}: {:?}", func_name, func_data.dfg().value(inst));
+                            cur_frame_size = Self::allocate_stack_slot(&mut func_analysis, inst, inst_ty);
+                        } 
+                    }
                 }
+                if !func_analysis.is_leaf_call {cur_frame_size += 4;}
+                func_analysis.stack_frame_size = (cur_frame_size + 15) / 16 * 16;
+                self.func_analysis_cache.insert(func_name.clone(), func_analysis);
             }
-            if !func_analysis.is_leaf_call {cur_frame_size += 4;}
-            func_analysis.stack_frame_size = (cur_frame_size + 15) / 16 * 16;
-            self.func_analysis_cache.insert(func_name.clone(), func_analysis);
             self.func_names.insert(func, func_name.clone());
         }
     }
@@ -120,9 +123,12 @@ impl KoopaTrans {
         asm_dir.push_str("    .text\n");
         for &func in program.func_layout() {
             let func_data = program.func(func);
-            asm_str.push_str(&self.generate_func(func_data));
-            let func_name = func_data.name().to_string();
-            asm_dir.push_str(&format!("    .global {}\n", &func_name[1..]));
+            let opt_entry_bb = func_data.layout().entry_bb();
+            if let Some(_) = opt_entry_bb {
+                asm_str.push_str(&self.generate_func(func_data));
+                let func_name = func_data.name().to_string();
+                asm_dir.push_str(&format!("    .global {}\n", &func_name[1..]));
+            }
         }
         asm_dir + &asm_str
     }

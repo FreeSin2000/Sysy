@@ -32,15 +32,18 @@
 //   return 1;
 // }
 
-int half(int x, int y) {
-  return (x + y) / 2;
-}
+// int half(int x, int y) {
+//   return (x + y) / 2;
+// }
 
-void f() {}
+// void f() {}
 
+// int main() {
+//   f();
+//   return half(10, 12);
+// }
 int main() {
-  f();
-  return half(10, 12);
+  return getint();
 }
 
 
