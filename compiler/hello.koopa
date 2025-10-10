@@ -1,5 +1,5 @@
 fun @half(@x: i32): i32 {
-%entry:
+%entry_half:
   %x = alloc i32
   store @x, %x
   %0 = load %x
@@ -8,12 +8,12 @@ fun @half(@x: i32): i32 {
 }
 
 fun @f() {
-%entry:
+%entry_f:
   ret
 }
 
 fun @main(): i32 {
-%entry:
+%entry_main:
   call @f()
   %2 = call @half(10)
   ret %2

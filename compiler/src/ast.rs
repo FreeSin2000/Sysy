@@ -101,7 +101,7 @@ impl Visitable for FuncDef {
                 vec![]
             };
 
-        let entry_bb = ast_trans.new_basic_block(Some("%entry".into()));
+        let entry_bb = ast_trans.new_basic_block(Some(format!("%entry_{}", self.ident)));
         ast_trans.extend_bb(entry_bb);
         let func_data = ast_trans.get_func_data();
 
