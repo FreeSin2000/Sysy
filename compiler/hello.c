@@ -32,15 +32,15 @@
 //   return 1;
 // }
 
-int half(int x) {
-  return x / 2;
+int half(int x, int y) {
+  return (x + y) / 2;
 }
 
 void f() {}
 
 int main() {
   f();
-  return half(10);
+  return half(10, 12);
 }
 
 

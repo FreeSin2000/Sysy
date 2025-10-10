@@ -60,6 +60,7 @@ impl KoopaTrans {
     }
     pub fn allocate_stack_slot(func_analysis: &mut FunctionAnalysis, value: Value, value_type: &Type) -> i32 {
         if let Some(offset) = func_analysis.stack_value_offsets.get(&value) {
+            panic!("should not be here.");
             return *offset;
         }
 
@@ -94,7 +95,6 @@ impl KoopaTrans {
                     };
                 }
             }
-            if !func_analysis.is_leaf_call {cur_frame_size += 4;}
             func_analysis.stack_frame_size = cur_frame_size;
 
             for (&bb, bb_node) in func_data.layout().bbs() {
@@ -102,18 +102,12 @@ impl KoopaTrans {
                 for (&inst, inst_node) in insts {
                     let inst_ty = func_data.dfg().value(inst).ty();
                     if !inst_ty.is_unit() {
+                        // println!("{}: {:?}", func_name, func_data.dfg().value(inst));
                         cur_frame_size = Self::allocate_stack_slot(&mut func_analysis, inst, inst_ty);
-                    } else {
-                        match inst_ty.kind() {
-                            TypeKind::Function(params_ty, ret_ty) => {
-                                println!("{:?}", ret_ty);
-                                cur_frame_size = Self::allocate_stack_slot(&mut func_analysis, inst, ret_ty);
-                            },
-                            _ => {},
-                        };
-                    }
+                    } 
                 }
             }
+            if !func_analysis.is_leaf_call {cur_frame_size += 4;}
             func_analysis.stack_frame_size = (cur_frame_size + 15) / 16 * 16;
             self.func_analysis_cache.insert(func_name.clone(), func_analysis);
             self.func_names.insert(func, func_name.clone());
@@ -187,14 +181,14 @@ impl KoopaTrans {
             ValueKind::Jump(jmp) => self.handle_jump(func_data, jmp),
             ValueKind::Branch(br) => self.handle_branch(func_data, br),
             ValueKind::Call(call) => {
-                println!("call {:?}", inst_data.kind());
-                self.handle_call(func_data, call, inst)
+                let opt_inst_val = if inst_data.ty().is_unit() {None} else {Some(inst)};
+                self.handle_call(func_data, call, opt_inst_val)
             },
             _ => panic!("invalid inst"),
         }
     }
 
-    pub fn handle_call(&mut self, func_data: &FunctionData, call: &Call, des_val: Value) -> String {
+    pub fn handle_call(&mut self, func_data: &FunctionData, call: &Call, opt_des_val: Option<Value>) -> String {
         let mut call_asm = String::new();
         for (arg_id, arg_val) in call.args().iter().enumerate() {
             let temp_reg = self.reg_allocator.get_temp_reg();
@@ -203,13 +197,15 @@ impl KoopaTrans {
                 let arg_offset = (arg_id as i32 - 8) * 4;
                 call_asm.push_str(&format!("    sw    {}, {}(sp)\n", temp_reg, arg_offset.to_string()));
             } else {
-                call_asm.push_str(&format!("    mv  {}, a{}\n", temp_reg, arg_id.to_string()));
+                call_asm.push_str(&format!("    mv    a{}, {}\n", arg_id.to_string(), temp_reg));
             }
         }
         let func_name = self.func_names.get(&call.callee()).unwrap(); 
         call_asm.push_str(&format!("    call  {}\n", &func_name[1..]));
-        let des_reg = self.reg_allocator.get_ret_reg();
-        call_asm.push_str(&self.store_operand(func_data, des_val, &des_reg));
+        if let Some(des_val) = opt_des_val {
+            let des_reg = self.reg_allocator.get_ret_reg();
+            call_asm.push_str(&self.store_operand(func_data, des_val, &des_reg));
+        }
         call_asm
     }
 
@@ -306,6 +302,11 @@ impl KoopaTrans {
         let func_analysis = self.func_analysis_cache.get(&func_name).unwrap();
         *func_analysis.stack_value_offsets.get(&val).unwrap()
     } 
+    pub fn get_stack_frame_size(&mut self, func_data: &FunctionData) -> i32 {
+        let func_name = func_data.name().to_string();
+        let func_analysis = self.func_analysis_cache.get(&func_name).unwrap();
+        func_analysis.stack_frame_size
+    }
     pub fn get_const(val_data: &ValueData) -> i32 {
         let val_kind = val_data.kind();
         assert!(val_kind.is_const());
@@ -328,7 +329,7 @@ impl KoopaTrans {
                 ValueKind::FuncArgRef(func_arg_ref) => {
                     let arg_id = func_arg_ref.index() as i32;
                     if arg_id >= 8 {
-                        let src_offset = (arg_id - 8) * 4;
+                        let src_offset = (arg_id - 8) * 4 + self.get_stack_frame_size(func_data);
                         format!("    lw    {}, {}(sp)\n", des_reg, src_offset.to_string())
                     } else {
                         format!("    mv    {}, a{}\n", des_reg, arg_id.to_string())
