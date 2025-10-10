@@ -44,7 +44,7 @@ fn main() -> Result<()> {
   println!("riscv:\n{}", asm_str);
   match mode.as_str() {
     "-koopa" => write(output, program_str)?,
-    // "-riscv" => write(output, asm_str)?,
+    "-riscv" => write(output, asm_str)?,
     _ => todo!("not implement other modes."),
   }
   Ok(())
