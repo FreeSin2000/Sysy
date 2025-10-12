@@ -5,11 +5,22 @@ use koopa::ir::entities::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+#[derive(Debug,Clone)]
+pub enum CompType {
+    Int,
+    Void,
+}
+
+#[derive(Debug,Clone)]
+pub enum GlobalUnit {
+    FuncDef(FuncDef),
+    Decl(Decl),
+}
 // CompUnit    ::= [CompUnit] FuncDef;
 #[derive(Debug,Clone)]
 pub struct CompUnit {
     pub comp_unit: Box<Option<CompUnit>>,
-    pub func_def: FuncDef,
+    pub global_unit: GlobalUnit,
 }
 
 
@@ -31,40 +42,45 @@ impl CompUnit {
             ast_trans.new_func_decl(String::from("@starttime"),vec![], ty_unit.clone());
             ast_trans.new_func_decl(String::from("@stoptime"),vec![], ty_unit.clone());
         }
+        match &self.global_unit {
+            GlobalUnit::FuncDef(func_def) => {
+                let func_name = String::from("@") + &func_def.ident;
+                // let mut params_ty = vec![];
+                // if let Some(func_params) = &func_def.params {
+                //     for param in &func_params.params {
+                //         let param_type = match param.param_type {
+                //             BType::Int => Type::get(TypeKind::Int32),
+                //         };
+                //         let param_name = param.param_name.clone();
+                //         params_ty.push((Some(format!("@{}", param_name)), param_type));
+                //     }
+                // }
+                let params_ty: Vec<(Option<String>, Type)> = 
+                    if let Some(func_params) = &func_def.params {
+                        func_params.params
+                            .clone()
+                            .into_iter()
+                            .map(|param| {
+                                let param_type = match param.param_type {
+                                    BType::Int => Type::get(TypeKind::Int32),
+                                };
+                                let param_name = param.param_name.clone();
+                                (Some(format!("@{}", param_name)), param_type)
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+                let ret_ty = match &func_def.func_type {
+                    FuncType::Int => Type::get_i32(),
+                    FuncType::Void => Type::get_unit(),
+                };       
+                let func = ast_trans.new_func(func_name, params_ty.clone(), ret_ty);
+                ast_trans.bind(func_def.ident.clone(), BindingItem::Func(func));
 
-        let func_name = String::from("@") + &self.func_def.ident;
-        // let mut params_ty = vec![];
-        // if let Some(func_params) = &self.func_def.params {
-        //     for param in &func_params.params {
-        //         let param_type = match param.param_type {
-        //             BType::Int => Type::get(TypeKind::Int32),
-        //         };
-        //         let param_name = param.param_name.clone();
-        //         params_ty.push((Some(format!("@{}", param_name)), param_type));
-        //     }
-        // }
-        let params_ty: Vec<(Option<String>, Type)> = 
-            if let Some(func_params) = &self.func_def.params {
-                func_params.params
-                    .clone()
-                    .into_iter()
-                    .map(|param| {
-                        let param_type = match param.param_type {
-                            BType::Int => Type::get(TypeKind::Int32),
-                        };
-                        let param_name = param.param_name.clone();
-                        (Some(format!("@{}", param_name)), param_type)
-                    })
-                    .collect()
-            } else {
-                vec![]
-            };
-        let ret_ty = match &self.func_def.func_type {
-            FuncType::Int => Type::get_i32(),
-            FuncType::Void => Type::get_unit(),
-        };       
-        let func = ast_trans.new_func(func_name, params_ty.clone(), ret_ty);
-        ast_trans.bind(self.func_def.ident.clone(), BindingItem::Func(func));
+            },
+            _ => todo!("Unimplement Global Decl."),
+        }
     }
 }
 
@@ -73,9 +89,14 @@ impl Visitable for CompUnit {
         if let Some(comp_unit) = &*self.comp_unit {
             comp_unit.accept(ast_trans);
         }
-        ast_trans.enter_scope();
-        self.func_def.accept(ast_trans);
-        ast_trans.exit_scope();
+        match &self.global_unit {
+            GlobalUnit::FuncDef(func_def) => {
+                ast_trans.enter_scope();
+                func_def.accept(ast_trans);
+                ast_trans.exit_scope();
+            },
+            _ => todo!("Unimplement Global Decl."),
+        }
         None
     }
 }
@@ -150,6 +171,16 @@ pub enum FuncType {
     Int,
     Void,
 }
+
+impl std::convert::From<CompType> for FuncType {
+    fn from(comp_type: CompType) -> Self {
+        match comp_type {
+            CompType::Int => FuncType::Int,
+            CompType::Void => FuncType::Void,
+        }
+    }
+}
+
 // FuncFParams ::= FuncFParam {"," FuncFParam};
 #[derive(Debug,Clone)]
 pub struct FuncFParams {
@@ -887,6 +918,14 @@ impl ConstDecl {
 #[derive(Debug,Clone)]
 pub enum BType {
     Int,
+}
+impl std::convert::From<CompType> for BType {
+    fn from(comp_type: CompType) -> Self {
+        match comp_type {
+            CompType::Int => BType::Int,
+            _ => panic!("Type conversion failed: BType only supports 'Int'"),
+        }
+    }
 }
 
 // ConstDef      ::= IDENT "=" ConstInitVal;

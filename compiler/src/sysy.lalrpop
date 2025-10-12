@@ -12,27 +12,24 @@ match {
   _
 }
 
-pub CompUnit: CompUnit = <comp_unit: CompUnit?> <func_def: FuncDef> => CompUnit{comp_unit:Box::new(comp_unit), func_def:func_def};
+pub CompUnit: CompUnit = <comp_unit: CompUnit?> <global_unit: GlobalUnit> => CompUnit{comp_unit:Box::new(comp_unit), global_unit};
 
+GlobalUnit: GlobalUnit = {
+  <func_def: FuncDef> => GlobalUnit::FuncDef(func_def),
+  <decl: Decl> => GlobalUnit::Decl(decl),
+}
 // FuncDef     ::= FuncType IDENT "(" [FuncFParams] ")" Block;
 FuncDef: FuncDef = {
-  <func_type: FuncType> <ident: Ident> "(" <params: FuncFParams?> ")" <block: Block> => {
-    FuncDef { <> }
+  <func_type: CompType> <ident: Ident> "(" <params: FuncFParams?> ")" <block: Block> => {
+    FuncDef {func_type: func_type.into(), ident, params, block}
   }
 }
 
-FuncType: FuncType = {
-  <btype: BType> => match <> {
-    BType::Int => FuncType::Int,
-    _ => unimplemented!("Not implement othe binding types."),
-  },
-  "void" => FuncType::Void,
-} 
 // FuncFParams ::= FuncFParam {"," FuncFParam};
 FuncFParams: FuncFParams = <params: Comma<FuncFParam>> => FuncFParams{<>};
 
 // FuncFParam  ::= BType IDENT;
-FuncFParam: FuncFParam = <param_type: BType> <param_name: Ident> => FuncFParam{param_type, param_name};
+FuncFParam: FuncFParam = <param_type: CompType> <param_name: Ident> => FuncFParam{param_type: param_type.into(), param_name};
 
 // FuncRParams ::= Exp {"," Exp};
 FuncRParams: FuncRParams = <params: Comma<Exp>> => FuncRParams{params};
@@ -152,11 +149,13 @@ Comma<T>: Vec<T> = {
     }
 };
 
-ConstDecl: ConstDecl = "const" <btype: BType> <const_defs: Comma<ConstDef>> ";" => ConstDecl{btype, const_defs};
+ConstDecl: ConstDecl = "const" <btype: CompType> <const_defs: Comma<ConstDef>> ";" => ConstDecl{btype: btype.into(), const_defs};
 
 // BType         ::= "int";
-BType: BType = {
-  "int" => BType::Int,
+
+CompType:CompType = {
+  "int" => CompType::Int,
+  "void" => CompType::Void,
 }
 
 // ConstDef      ::= IDENT "=" ConstInitVal;
@@ -186,7 +185,7 @@ VarDef: VarDef = {
 }
 
 // VarDecl       ::= BType VarDef {"," VarDef} ";";
-VarDecl: VarDecl = <btype: BType> <var_defs: Comma<VarDef>> ";" => VarDecl{btype, var_defs};
+VarDecl: VarDecl = <btype: CompType> <var_defs: Comma<VarDef>> ";" => VarDecl{btype: btype.into(), var_defs};
 
 // 如果匹配到标识符, 就返回这个字符串
 // 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)
