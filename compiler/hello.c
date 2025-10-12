@@ -42,11 +42,18 @@
 //   f();
 //   return half(10, 12);
 // }
-int var;
-int main() {
-  return getint();
-}
+// int var = 13;
+// int main() {
+//   return getint();
+// }
 
+int var;
+
+const int one = 1;
+
+int main() {
+  return one + var;
+}
 
 // int main() {
 //   if (114) {

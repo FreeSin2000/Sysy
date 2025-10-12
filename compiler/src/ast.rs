@@ -92,7 +92,8 @@ impl CompUnit {
                                     (ident.clone(), ast_trans.koopa_program.new_value().zero_init(l_ty))
                                 },
                                 VarDef::IDENTInitVal(ident, init_val) => {
-                                    (ident.clone(), init_val.exp.const_eval(ast_trans))
+                                    let init_num = init_val.exp.const_eval(ast_trans);
+                                    (ident.clone(), ast_trans.koopa_program.new_value().integer(init_num))
                                 }
                             };
                             let l_val = ast_trans.new_global_alloc(l_init);
@@ -280,7 +281,7 @@ pub trait Visitable {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value>;
 }
 pub trait ConstValue {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value;
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32;
 }
 
 impl Visitable for Stmt {
@@ -419,10 +420,10 @@ pub enum Number {
 }
 
 impl ConstValue for Number {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             Number::INT_CONST(num) => {
-                ast_trans.new_integer(*num)
+                *num
             },
         }
     }
@@ -454,27 +455,27 @@ pub enum UnaryExp {
 }
 
 impl ConstValue for UnaryExp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             UnaryExp::PrimaryExp(primary_exp) => primary_exp.const_eval(ast_trans),
             UnaryExp::UnaryOpExp(unary_op, unary_exp) => {
                 match unary_op {
                     UnaryOp::Plus => unary_exp.const_eval(ast_trans),
                     UnaryOp::Minus => {
-                        let lhs = ast_trans.new_integer(0);
+                        let lhs = 0;
                         let rhs = unary_exp.const_eval(ast_trans);
                         ast_trans.const_binary(BinaryOp::Sub, lhs, rhs)
                     },
                     UnaryOp::Not => {
-                        let rhs = ast_trans.new_integer(0);
+                        let rhs = 0;
                         let lhs = unary_exp.const_eval(ast_trans);
-                        ast_trans.new_binary(BinaryOp::Eq, lhs, rhs)
+                        ast_trans.const_binary(BinaryOp::Eq, lhs, rhs)
                     },
                 }
             },
             UnaryExp::FuncCall(ident, opt_params) => {
                 panic!("Const can't be assigned with func call.");
-                ast_trans.new_integer(0)
+                0
             },
         }
     }
@@ -541,7 +542,7 @@ pub enum PrimaryExp {
 }
 
 impl ConstValue for PrimaryExp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             PrimaryExp::ParenthesizedExp(exp) => exp.const_eval(ast_trans),
             PrimaryExp::LVal(lval) => {
@@ -567,6 +568,10 @@ impl Visitable for PrimaryExp {
                     },
                     ValueKind::Load(load) => Some(val),
                     ValueKind::FuncArgRef(arg) => Some(val),
+                    ValueKind::GlobalAlloc(global_alloc) => {
+                        let load_val = ast_trans.new_load(val);
+                        Some(load_val)
+                    },
                     _ => unimplemented!("Unimplement LVal kind."),
                 }
             },
@@ -587,7 +592,7 @@ impl Visitable for Exp {
 }
 
 impl ConstValue for Exp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         self.lor_exp.const_eval(ast_trans)
     }
 }
@@ -606,7 +611,7 @@ pub enum MulExp {
 }
 
 impl ConstValue for MulExp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             MulExp::UnaryExp(unary_exp) => unary_exp.const_eval(ast_trans),
             MulExp::MulOpExp(mul_exp, mul_op, unary_exp) => {
@@ -652,7 +657,7 @@ pub enum AddExp {
 }
 
 impl ConstValue for AddExp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             AddExp::MulExp(mul_exp) => mul_exp.const_eval(ast_trans),
             AddExp::AddOpExp(add_exp, add_op, mul_exp) => {
@@ -692,14 +697,12 @@ pub enum RelExp {
 }
 
 impl ConstValue for RelExp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             RelExp::AddExp(add_exp) => add_exp.const_eval(ast_trans),
             RelExp::RelOpExp(rel_exp, rel_op, add_exp) => {
-                let lhs = rel_exp.const_eval(ast_trans);
-                let rhs = add_exp.const_eval(ast_trans);
-                let lhs_num = ast_trans.get_const(lhs);
-                let rhs_num = ast_trans.get_const(rhs);
+                let lhs_num = rel_exp.const_eval(ast_trans);
+                let rhs_num = add_exp.const_eval(ast_trans);
 
                 let val_num = match rel_op {
                     RelOp::Gt => (lhs_num > rhs_num) as i32,
@@ -707,7 +710,7 @@ impl ConstValue for RelExp {
                     RelOp::Ge => (lhs_num >= rhs_num) as i32,
                     RelOp::Le => (lhs_num <= rhs_num) as i32,
                 };
-                ast_trans.new_integer(val_num)
+                val_num
             }
         }
     }
@@ -748,19 +751,17 @@ pub enum EqExp {
 }
 
 impl ConstValue for EqExp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             EqExp::RelExp(rel_exp) => rel_exp.const_eval(ast_trans),
             EqExp::EqOpExp(eq_exp, eq_op, rel_exp) => {
-                let lhs = eq_exp.const_eval(ast_trans);
-                let rhs = rel_exp.const_eval(ast_trans);
-                let lhs_num = ast_trans.get_const(lhs);
-                let rhs_num = ast_trans.get_const(rhs);
+                let lhs_num = eq_exp.const_eval(ast_trans);
+                let rhs_num = rel_exp.const_eval(ast_trans);
                 let val_num = match eq_op {
                     EqOp::Eq => (lhs_num == rhs_num) as i32,
                     EqOp::NotEq => (lhs_num != rhs_num) as i32,
                 };
-                ast_trans.new_integer(val_num)
+                val_num
             }
         }
     }
@@ -796,15 +797,13 @@ pub enum LAndExp {
 }
 
 impl ConstValue for LAndExp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             LAndExp::EqExp(eq_exp) => eq_exp.const_eval(ast_trans),
             LAndExp::LAndOpExp(land_exp, eq_exp) => {
-                let lhs = land_exp.const_eval(ast_trans);
-                let rhs = eq_exp.const_eval(ast_trans);
-                let lhs_num = ast_trans.get_const(lhs);
-                let rhs_num = ast_trans.get_const(rhs);
-                ast_trans.new_integer((lhs_num != 0 && rhs_num != 0) as i32)
+                let lhs_num = land_exp.const_eval(ast_trans);
+                let rhs_num = eq_exp.const_eval(ast_trans);
+                (lhs_num != 0 && rhs_num != 0) as i32
             },
         }
     }
@@ -857,15 +856,13 @@ pub enum LOrExp {
 }
 
 impl ConstValue for LOrExp {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             LOrExp::LAndExp(land_exp) => land_exp.const_eval(ast_trans),
             LOrExp::LOrOpExp(lor_exp, land_exp) => {
-                let lhs = lor_exp.const_eval(ast_trans);
-                let rhs = land_exp.const_eval(ast_trans);
-                let lhs_num = ast_trans.get_const(lhs);
-                let rhs_num = ast_trans.get_const(rhs);
-                ast_trans.new_integer((lhs_num != 0 || rhs_num != 0) as i32)
+                let lhs_num = lor_exp.const_eval(ast_trans);
+                let rhs_num = land_exp.const_eval(ast_trans);
+                (lhs_num != 0 || rhs_num != 0) as i32
             },
         }
     }
@@ -961,10 +958,10 @@ pub struct ConstDef {
 }
 
 impl ConstDef {
-    fn to_binding(&self, ast_trans: &mut AstTrans) -> (String, Value) {
+    fn to_binding(&self, ast_trans: &mut AstTrans) -> (String, i32) {
         // let val = self.const_init_val.const_exp.exp.accept(ast_trans).unwrap();
         let val = self.const_init_val.const_exp.exp.const_eval(ast_trans);
-        assert!(ast_trans.get_value_kind(val).is_const());
+        // assert!(ast_trans.get_value_kind(val).is_const());
         (self.ident.clone(), val)
     }
 }
@@ -990,7 +987,7 @@ pub enum LVal {
     IDENT(String),
 }
 impl ConstValue for LVal {
-    fn const_eval(&self, ast_trans: &mut AstTrans) -> Value {
+    fn const_eval(&self, ast_trans: &mut AstTrans) -> i32 {
         match self {
             LVal::IDENT(ident) => { 
                 if let Some(binding) = ast_trans.lookup(ident) {
@@ -1012,19 +1009,16 @@ impl Visitable for LVal {
     fn accept(&self, ast_trans: &mut AstTrans) -> Option<Value> {
         match self {
             LVal::IDENT(ident) => { 
-                if let Some(binding) = ast_trans.lookup(ident) {
+                let binding = ast_trans.lookup(ident).unwrap().clone();
                     match binding {
                         BindingItem::ConstInt(val) => {
-                            Some(*val)
+                            Some(ast_trans.new_integer(val))
                         },
                         BindingItem::VarInt(val) => {
-                            Some(*val)
+                            Some(val)
                         },
                         _ => unimplemented!("Unimplement BindingItem type."),
                     }
-                } else {
-                    panic!("undefined name.");
-                }
             },
             _ => unimplemented!("Unimplement LVal."),
         }
@@ -1088,7 +1082,7 @@ impl VarDecl {
 }
 #[derive(Debug,Clone)]
 pub enum BindingItem {
-    ConstInt(Value),
+    ConstInt(i32),
     VarInt(Value),
     Func(Function),
 }
@@ -1263,14 +1257,29 @@ impl AstTrans {
         let func_data = self.get_func_data();
         func_data.dfg().value(val)
     }
-    pub fn get_value_kind(&mut self, val: Value) -> &ValueKind {
-        let val_data = self.get_value_data(val);
-        val_data.kind()
+    // Ungly implement QAQ.
+    // TODO: How to refine?
+    pub fn get_value_kind(&mut self, val: Value) -> ValueKind {
+        if val.is_global() {
+            self.koopa_program.borrow_value(val).clone().kind().clone()
+        } else {
+            let val_data = self.get_value_data(val);
+            val_data.kind().clone()
+        }
     }
-    pub fn get_const(&mut self, val: Value) -> i32 {
-        let val_data = self.get_value_data(val);
-        Self::const_num(val_data)
-    }
+    // pub fn get_const(&mut self, val: Value) -> i32 {
+    //     if val.is_global() {
+    //         match self.koopa_program.borrow_value(val).kind() {
+    //             ValueKind::Integer(int) => int.value(),
+    //             _ => panic!("Not a Integer, maybe not implement."),
+    //         }
+    //     } else {
+    //         match self.get_value_data(val).kind() {
+    //             ValueKind::Integer(int) => int.value(),
+    //             _ => panic!("Not a Integer, maybe not implement."),
+    //         }
+    //     }
+    // }
     pub fn new_func(&mut self, func_name: String, func_params_ty: Vec<(Option<String>, Type)>, func_ret_ty: Type) -> Function {
         let func = self.koopa_program.new_func(FunctionData::with_param_names(func_name, func_params_ty, func_ret_ty));
         // self.cur_ctx.set_func(func);
@@ -1295,6 +1304,7 @@ impl AstTrans {
         let func_data = self.get_func_data_mut();
         func_data.dfg_mut().new_value().integer(num)
     }
+
     pub fn new_ret(&mut self, res: Option<Value>) -> Value {
         let func_data = self.get_func_data_mut();
         let ret_val = func_data.dfg_mut().new_value().ret(res);
@@ -1316,10 +1326,8 @@ impl AstTrans {
         self.cur_ctx.set_bb_terminate();
         branch_val
     }
-    pub fn const_binary(&mut self, bin_op: BinaryOp, lhs: Value, rhs: Value) -> Value {
-        assert!(self.get_value_kind(lhs).is_const() && self.get_value_kind(rhs).is_const());
-        let lhs_num = self.get_const(lhs);
-        let rhs_num = self.get_const(rhs);
+    pub fn const_binary(&mut self, bin_op: BinaryOp, lhs_num: i32, rhs_num: i32) -> i32 {
+        // assert!(self.get_value_kind(lhs).is_const() && self.get_value_kind(rhs).is_const());
         let val_num = match bin_op {
             BinaryOp::NotEq => (lhs_num != rhs_num) as i32,
             BinaryOp::Eq => (lhs_num == rhs_num) as i32,
@@ -1336,7 +1344,7 @@ impl AstTrans {
             BinaryOp::And => (lhs_num != 0 && rhs_num != 0) as i32,
             _ => unimplemented!("Binary op not implement!"), 
         };
-        self.new_integer(val_num)
+        val_num
     }
     pub fn new_binary(&mut self, bin_op: BinaryOp, lhs: Value, rhs: Value) -> Value {
         let func_data = self.get_func_data_mut();

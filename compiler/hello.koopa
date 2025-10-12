@@ -18,6 +18,7 @@ decl @stoptime()
 
 fun @main(): i32 {
 %entry_main:
-  %0 = call @getint()
-  ret %0
+  %0 = load @var
+  %1 = add 1, %0
+  ret %1
 }
