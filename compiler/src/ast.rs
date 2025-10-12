@@ -77,9 +77,33 @@ impl CompUnit {
                 };       
                 let func = ast_trans.new_func(func_name, params_ty.clone(), ret_ty);
                 ast_trans.bind(func_def.ident.clone(), BindingItem::Func(func));
-
             },
-            _ => todo!("Unimplement Global Decl."),
+            GlobalUnit::Decl(decl) => {
+                match decl {
+                    Decl::ConstDecl(const_decl) => {
+                        const_decl.build_bindings(ast_trans); 
+                    },
+                    Decl::VarDecl(var_decl) => {
+                        for var_def in &var_decl.var_defs {
+                            // TODO
+                            let l_ty = Type::get(TypeKind::Int32);
+                            let (ident, l_init) = match var_def {
+                                VarDef::IDENT(ident) => {
+                                    (ident.clone(), ast_trans.koopa_program.new_value().zero_init(l_ty))
+                                },
+                                VarDef::IDENTInitVal(ident, init_val) => {
+                                    (ident.clone(), init_val.exp.const_eval(ast_trans))
+                                }
+                            };
+                            let l_val = ast_trans.new_global_alloc(l_init);
+                            ast_trans.set_global_value_name(l_val, Some(String::from("@") + &ident));
+                            let binding = BindingItem::VarInt(l_val);
+                            ast_trans.bind(ident.to_string(), binding);
+                        }
+                    },
+                    // _ => unimplemented!("Not implement other decl."),
+                }
+            },
         }
     }
 }
@@ -95,6 +119,7 @@ impl Visitable for CompUnit {
                 func_def.accept(ast_trans);
                 ast_trans.exit_scope();
             },
+            GlobalUnit::Decl(_) => (),
             _ => todo!("Unimplement Global Decl."),
         }
         None
@@ -223,7 +248,7 @@ impl Visitable for Block {
                         },
                         Decl::VarDecl(var_decl) => {
                             var_decl.build_bindngs(ast_trans);
-                        }
+                        },
                         _ => unimplemented!("Not implement other decl."),
                     }
                 },
@@ -1221,6 +1246,9 @@ impl AstTrans {
         let func_data = self.get_func_data_mut();
         func_data.dfg_mut().set_value_name(val, name);
     }
+    pub fn set_global_value_name(&mut self, val: Value, name: Option<String>) {
+        self.koopa_program.set_value_name(val, name);
+    }
 
     pub fn get_func_data(&mut self) -> &FunctionData {
         let func = self.get_cur_func();
@@ -1336,6 +1364,9 @@ impl AstTrans {
         let alloc_val = func_data.dfg_mut().new_value().alloc(ty);
         self.extend_inst(alloc_val);
         alloc_val
+    }
+    pub fn new_global_alloc(&mut self, init_val: Value) -> Value {
+        self.koopa_program.new_value().global_alloc(init_val)
     }
     pub fn new_call(&mut self, func: Function, params: Vec<Value>) -> Value {
         let func_data = self.get_func_data_mut();

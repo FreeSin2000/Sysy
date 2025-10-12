@@ -1,3 +1,5 @@
+global @var = alloc i32, zeroinit
+
 decl @getint(): i32
 
 decl @getch(): i32

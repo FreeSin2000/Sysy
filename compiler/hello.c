@@ -42,6 +42,7 @@
 //   f();
 //   return half(10, 12);
 // }
+int var;
 int main() {
   return getint();
 }
