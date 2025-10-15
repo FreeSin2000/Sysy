@@ -52,6 +52,7 @@ int var;
 const int one = 1;
 
 int main() {
+  var = one + one;
   return one + var;
 }
 

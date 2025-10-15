@@ -11,6 +11,7 @@ use std::fmt::Write;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::borrow::Borrow;
 
 pub struct RegisterAllocator;
 
@@ -26,6 +27,9 @@ impl RegisterAllocator {
     }
     pub fn get_cond_reg(&mut self) -> String {
         String::from("t3")
+    }
+    pub fn get_var_reg(&mut self) -> String {
+        String::from("t4")
     }
 }
 
@@ -44,10 +48,16 @@ impl FunctionAnalysis {
         }
     } 
 }
+
+pub enum VarInfo {
+    Int32(String),
+}
+
 pub struct KoopaTrans {
     reg_allocator: RegisterAllocator,
     func_analysis_cache: HashMap<String, FunctionAnalysis>,
     func_names: HashMap<Function, String>,
+    global_vars: HashMap<Value, VarInfo>,
 }
 
 impl KoopaTrans {
@@ -56,6 +66,7 @@ impl KoopaTrans {
             reg_allocator: RegisterAllocator,
             func_analysis_cache: HashMap::new(),
             func_names: HashMap::new(),
+            global_vars: HashMap::new(),
         }
     }
     pub fn allocate_stack_slot(func_analysis: &mut FunctionAnalysis, value: Value, value_type: &Type) -> i32 {
@@ -120,6 +131,36 @@ impl KoopaTrans {
     pub fn generate_program(&mut self, program: &Program) -> String {
         let mut asm_str = String::from("");
         let mut asm_dir = String::from("");
+        asm_dir.push_str("    .data\n");
+        let global_vars = program.borrow_values();
+
+        for (val, val_data) in global_vars.borrow().iter() {
+            let val_kind = val_data.kind();
+            // let val_ty = val_dta.ty();
+            match val_kind {
+                ValueKind::GlobalAlloc(global_alloc) => {
+                    let val_name = val_data.name().clone().unwrap();
+                    let init_val = global_alloc.init();
+                    let init_data = program.borrow_value(init_val);
+
+                    asm_dir.push_str(&format!("    .global {}\n", &val_name[1..]));
+                    match init_data.kind() {
+                        ValueKind::ZeroInit(_) => {
+                            let var_size = 4;
+                            asm_dir.push_str(&format!("{}:\n    .zero {}\n", &val_name[1..], var_size.to_string()));
+                        },
+                        ValueKind::Integer(int) => {
+                            asm_dir.push_str(&format!("{}:\n    .word {}\n", &val_name[1..], int.value().to_string()));
+                        },
+                        _ => {panic!("Unimplementede globall alloc type.");},
+                    };
+
+                    self.global_vars.insert(*val, VarInfo::Int32(val_name[1..].to_string()));
+                },
+                _ => {continue;},
+            }
+        }
+
         asm_dir.push_str("    .text\n");
         for &func in program.func_layout() {
             let func_data = program.func(func);
@@ -322,36 +363,62 @@ impl KoopaTrans {
         }
     }
     pub fn load_operand(&mut self, func_data: &FunctionData, src_val: Value, des_reg: &String) -> String {
-        let src_data = func_data.dfg().value(src_val);
-        if src_data.kind().is_const() {
-            let src_num = Self::get_const(src_data);
-            if src_num == 0 {
-                format!("    mv    {}, x0\n", des_reg)
-            } else {
-                format!("    li    {}, {}\n", des_reg, src_num.to_string())
-            }
-        } else {
-            match src_data.kind() {
-                ValueKind::FuncArgRef(func_arg_ref) => {
-                    let arg_id = func_arg_ref.index() as i32;
-                    if arg_id >= 8 {
-                        let src_offset = (arg_id - 8) * 4 + self.get_stack_frame_size(func_data);
-                        format!("    lw    {}, {}(sp)\n", des_reg, src_offset.to_string())
-                    } else {
-                        format!("    mv    {}, a{}\n", des_reg, arg_id.to_string())
-                    }
+        if src_val.is_global() {
+            let var_info = self.global_vars.get(&src_val).unwrap();
+            match var_info {
+                VarInfo::Int32(var_name) => {
+                    format!("    la    {}, {}\n    lw    {}, 0({})\n", des_reg, var_name, des_reg, des_reg)
                 },
                 _ => {
-                    let src_offset = self.get_stack_offset(func_data, src_val);
-                    format!("    lw    {}, {}(sp)\n", des_reg, src_offset.to_string())
+                    panic!("Unimplemented global type.");
+                },
+            }
+
+        } else {
+            let src_data = func_data.dfg().value(src_val);
+            if src_data.kind().is_const() {
+                let src_num = Self::get_const(src_data);
+                if src_num == 0 {
+                    format!("    mv    {}, x0\n", des_reg)
+                } else {
+                    format!("    li    {}, {}\n", des_reg, src_num.to_string())
+                }
+            } else {
+                match src_data.kind() {
+                    ValueKind::FuncArgRef(func_arg_ref) => {
+                        let arg_id = func_arg_ref.index() as i32;
+                        if arg_id >= 8 {
+                            let src_offset = (arg_id - 8) * 4 + self.get_stack_frame_size(func_data);
+                            format!("    lw    {}, {}(sp)\n", des_reg, src_offset.to_string())
+                        } else {
+                            format!("    mv    {}, a{}\n", des_reg, arg_id.to_string())
+                        }
+                    },
+                    _ => {
+                        let src_offset = self.get_stack_offset(func_data, src_val);
+                        format!("    lw    {}, {}(sp)\n", des_reg, src_offset.to_string())
+                    }
                 }
             }
         }
     }
     pub fn store_operand(&mut self, func_data: &FunctionData, des_val: Value, src_reg: &String) -> String {
         // let des_data = func_data.dfg().value(des_val);
-        let des_offset = self.get_stack_offset(func_data, des_val);
-        format!("    sw    {}, {}(sp)\n", src_reg, des_offset.to_string())
+        if des_val.is_global() {
+            let var_info = self.global_vars.get(&des_val).unwrap();
+            let var_reg = self.reg_allocator.get_var_reg();
+            match var_info {
+                VarInfo::Int32(var_name) => {
+                    format!("    la    {}, {}\n    sw    {}, 0({})\n", var_reg, var_name, src_reg, var_reg)
+                },
+                _ => {
+                    panic!("Unimplemented global type.");
+                },
+            }
+        } else {
+            let des_offset = self.get_stack_offset(func_data, des_val);
+            format!("    sw    {}, {}(sp)\n", src_reg, des_offset.to_string())
+        }
     }
 
     pub fn program_to_string(program: & Program) -> String {
